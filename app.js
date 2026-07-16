@@ -683,6 +683,15 @@ function applyFiltersAndRender() {
     }
   });
 
+  const countDisplay = document.getElementById('model-count-display');
+  if (countDisplay) {
+    if (filtered.length === unifiedModels.length) {
+      countDisplay.textContent = unifiedModels.length;
+    } else {
+      countDisplay.textContent = `${filtered.length} of ${unifiedModels.length}`;
+    }
+  }
+
   renderTable(filtered);
 }
 
