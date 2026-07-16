@@ -1,0 +1,123 @@
+<!-- 
+  EuroInference - Multi-Provider LLM Price Comparison
+  Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0)
+  See LICENSE file in the project root for full license text.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="EuroInference: Direct multi-provider pricing and feature comparison dashboard for European LLM networks (Mammouth AI, Cortecs, Mistral AI), normalized dynamically in USD and EUR.">
+  <title>EuroInference | Multi-Provider LLM Pricing Compare</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header>
+      <div class="logo-section">
+        <h1>EuroInference</h1>
+        <p>Compare available models and normalized pricing across European LLM providers (Mammouth AI, Cortecs, Mistral AI)</p>
+      </div>
+      
+      <div class="config-controls">
+        <!-- Exchange rate display -->
+        <div class="exchange-info" id="exchange-rate-banner">
+          ECB Rate: 1 EUR = <span id="exchange-rate-val">...</span> USD
+        </div>
+        
+        <!-- Currency switch -->
+        <div class="currency-switcher" id="currency-switcher-widget">
+          <div class="currency-option active" data-currency="EUR">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h12a4 4 0 0 1 0 8H4M4 6h12M4 14h8"></path></svg>
+            EUR (€)
+          </div>
+          <div class="currency-option" data-currency="USD">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+            USD ($)
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Layout (Full Width) -->
+    <div class="dashboard-grid">
+      <!-- Main Display Panel -->
+      <main class="main-content">
+        <!-- Explorer Table -->
+        <section>
+          <div class="table-wrapper">
+            <table class="models-table" id="models-explorer-table">
+              <thead>
+                <!-- Sort headers -->
+                <tr>
+                  <th class="sortable active-sort" data-sort="id">Model Name <span class="sort-indicator">▲</span></th>
+                  <th class="sortable" data-sort="creator">Creator <span class="sort-indicator"></span></th>
+                  <th>Available Providers</th>
+                  <th class="sortable" data-sort="context">Context Window <span class="sort-indicator"></span></th>
+                  <th class="sortable" data-sort="input">Best Input Price / 1M <span class="sort-indicator"></span></th>
+                  <th class="sortable" data-sort="output">Best Output Price / 1M <span class="sort-indicator"></span></th>
+                  <th class="sortable" data-sort="savings">Best Provider <span class="sort-indicator"></span></th>
+                </tr>
+                <!-- Inline Header Filters -->
+                <tr class="header-filters-row">
+                  <th>
+                    <input type="text" id="filter-id" placeholder="🔍 Search / filter model..." class="header-filter-input">
+                  </th>
+                  <th>
+                    <select id="filter-creator" class="header-filter-select">
+                      <option value="all">All Creators</option>
+                    </select>
+                  </th>
+                  <th>
+                    <select id="filter-source" class="header-filter-select">
+                      <option value="all">All Sources</option>
+                      <option value="matched">Matched in Multiple</option>
+                      <option value="mammouth">Mammouth AI</option>
+                      <option value="cortecs">Cortecs</option>
+                      <option value="mistral">Mistral AI</option>
+                      <option value="edenai">Eden AI</option>
+                      <option value="opper">Opper AI</option>
+                      <option value="eurouter">EURouter</option>
+                      <option value="requesty">Requesty AI</option>
+                    </select>
+                  </th>
+                  <th></th>
+                  <th></th>
+                  <th></th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="models-table-body">
+                <!-- Rows render here -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- Detail Compare Modal Overlay -->
+  <div class="overlay-panel" id="detail-overlay">
+    <div class="glass-panel compare-modal">
+      <div class="modal-header">
+        <h3 id="modal-title-text">Compare Models</h3>
+        <button class="close-btn" id="modal-close-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      
+      <div class="modal-content">
+        <!-- Dynamic cards load here -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Load Data snapshots first -->
+  <script src="data.js"></script>
+  <!-- Load Main Application Logic -->
+  <script src="app.js"></script>
+</body>
+</html>
