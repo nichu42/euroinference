@@ -45,6 +45,30 @@
     <div class="dashboard-grid">
       <!-- Main Display Panel -->
       <main class="main-content">
+        <!-- Workload Estimator -->
+        <section class="workload-panel" aria-label="Your workload inputs">
+          <div class="workload-grid">
+            <label class="workload-field">
+              <span class="workload-label">Min context</span>
+              <input type="number" id="filter-min-context" min="0" step="1024" value="0" title="Try 32000 to focus on smaller models">
+              <span class="workload-suffix">tokens</span>
+            </label>
+            <label class="workload-field">
+              <span class="workload-label">Input / request</span>
+              <input type="number" id="filter-input-tokens" min="1" step="500" value="10000">
+              <span class="workload-suffix">tokens</span>
+            </label>
+            <label class="workload-field">
+              <span class="workload-label">Output / request</span>
+              <input type="number" id="filter-output-tokens" min="1" step="100" value="1000">
+              <span class="workload-suffix">tokens</span>
+            </label>
+            <div class="workload-hint">
+              <span>Cost column = <code>(input × input_price + output × output_price) / 1M</code> using the cheapest offer per model.</span>
+            </div>
+          </div>
+        </section>
+
         <!-- Explorer Table -->
         <section>
           <div class="table-wrapper">
@@ -54,10 +78,12 @@
                 <tr>
                   <th class="sortable active-sort" data-sort="id">Model Name <span class="sort-indicator">▲</span></th>
                   <th class="sortable" data-sort="creator">Creator <span class="sort-indicator"></span></th>
-                  <th>Available Providers</th>
+                  <th>Providers</th>
                   <th class="sortable" data-sort="context">Context Window <span class="sort-indicator"></span></th>
                   <th class="sortable" data-sort="input">Best Input Price / 1M <span class="sort-indicator"></span></th>
                   <th class="sortable" data-sort="output">Best Output Price / 1M <span class="sort-indicator"></span></th>
+                  <th class="sortable" data-sort="reasoning" title="Cheapest price among providers whose offers support reasoning">Best w/ Reasoning / 1M <span class="sort-indicator"></span></th>
+                  <th class="sortable" data-sort="workload" id="workload-col-header" title="Total cost for a single request using your workload inputs and the cheapest offer. Edit inputs above the table.">Cost (your workload) <span class="sort-indicator"></span></th>
                   <th class="sortable" data-sort="savings">Best Provider <span class="sort-indicator"></span></th>
                 </tr>
                 <!-- Inline Header Filters -->
@@ -71,9 +97,8 @@
                     </select>
                   </th>
                   <th>
-                    <select id="filter-source" class="header-filter-select">
-                      <option value="all">All Sources</option>
-                      <option value="matched">Matched in Multiple</option>
+                    <select id="filter-source" class="header-filter-select" multiple size="6" title="Hold Ctrl/Cmd to select multiple providers">
+                      <option value="matched">Multi-provider (≥2)</option>
                       <option value="mammouth">Mammouth AI</option>
                       <option value="cortecs">Cortecs</option>
                       <option value="mistral">Mistral AI</option>
@@ -87,10 +112,21 @@
                   <th></th>
                   <th></th>
                   <th></th>
+                  <th></th>
+                  <th></th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody id="models-table-body">
-                <!-- Rows render here -->
+                <!-- Initial loading placeholder; cleared on first renderTable() call. -->
+                <tr id="loading-row">
+                  <td colspan="9">
+                    <div class="loading-state">
+                      <div class="loading-spinner" aria-hidden="true"></div>
+                      <div class="loading-text">Loading model data…</div>
+                    </div>
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -116,8 +152,8 @@
   </div>
 
   <!-- Load Data snapshots first -->
-  <script src="data.js"></script>
+  <script src="data.js" defer></script>
   <!-- Load Main Application Logic -->
-  <script src="app.js"></script>
+  <script src="app.js" defer></script>
 </body>
 </html>

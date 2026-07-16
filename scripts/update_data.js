@@ -161,45 +161,54 @@ async function run() {
   if (fs.existsSync(dataFilePath)) {
     currentContent = fs.readFileSync(dataFilePath, 'utf8');
   }
-  
-  // Construct the new data.js file content
-  const outMammouth = mammouthData 
-    ? JSON.stringify(mammouthData, null, 2) 
-    : extractFallbackVariable(currentContent, 'MAMMOUTH_FALLBACK');
-    
-  const outCortecs = cortecsData 
-    ? JSON.stringify(cortecsData, null, 2) 
-    : extractFallbackVariable(currentContent, 'CORTECTS_FALLBACK');
 
-  const outEden = edenaiData 
-    ? JSON.stringify(edenaiData, null, 2) 
+  // Trim each provider's data down to only the fields app.js actually reads.
+  // This is the only place to update this allowlist when app.js's data access changes.
+  if (mammouthData) mammouthData = mammouthData.map(m => pickFields('mammouth', m));
+  if (cortecsData) cortecsData = cortecsData.map(m => pickFields('cortecs', m));
+  if (edenaiData) edenaiData = edenaiData.map(m => pickFields('edenai', m));
+  if (opperData) opperData = opperData.map(m => pickFields('opper', m));
+  if (eurouterData) eurouterData = eurouterData.map(m => pickFields('eurouter', m));
+  if (requestyData) requestyData = requestyData.map(m => pickFields('requesty', m));
+
+  // Construct the new data.js file content
+  const outMammouth = mammouthData
+    ? JSON.stringify(mammouthData)
+    : extractFallbackVariable(currentContent, 'MAMMOUTH_FALLBACK');
+
+  const outCortecs = cortecsData
+    ? JSON.stringify(cortecsData)
+    : extractFallbackVariable(currentContent, 'CORTECS_FALLBACK');
+
+  const outEden = edenaiData
+    ? JSON.stringify(edenaiData)
     : extractFallbackVariable(currentContent, 'EDENAI_FALLBACK');
 
-  const outOpper = opperData 
-    ? JSON.stringify(opperData, null, 2) 
+  const outOpper = opperData
+    ? JSON.stringify(opperData)
     : extractFallbackVariable(currentContent, 'OPPER_FALLBACK');
 
-  const outEurouter = eurouterData 
-    ? JSON.stringify(eurouterData, null, 2) 
+  const outEurouter = eurouterData
+    ? JSON.stringify(eurouterData)
     : extractFallbackVariable(currentContent, 'EUROUTER_FALLBACK');
 
-  const outRequesty = requestyData 
-    ? JSON.stringify(requestyData, null, 2) 
+  const outRequesty = requestyData
+    ? JSON.stringify(requestyData)
     : extractFallbackVariable(currentContent, 'REQUESTY_FALLBACK');
-    
-  const outRate = exchangeRateData 
-    ? JSON.stringify(exchangeRateData[0] || exchangeRateData, null, 2) 
-    : extractFallbackVariable(currentContent, 'EXCHANGE_RATE_FALLBACK');
-    
+
+  const outRate = exchangeRateData
+    ? JSON.stringify(exchangeRateData[0] || exchangeRateData)
+    : extractFallbackVariable(currentContent, 'EXCHANGE_RATE');
+
   const content = `// Auto-generated data file - Do not edit manually. Generated at ${new Date().toISOString()}
 
 const MAMMOUTH_FALLBACK = ${outMammouth};
 
 const CORTECTS_FALLBACK = ${outCortecs};
 
-const EXCHANGE_RATE_FALLBACK = ${outRate};
+const EXCHANGE_RATE = ${outRate};
 
-const MISTRAL_FALLBACK = ${JSON.stringify(MISTRAL_FALLBACK, null, 2)};
+const MISTRAL_FALLBACK = ${JSON.stringify(MISTRAL_FALLBACK)};
 
 const EDENAI_FALLBACK = ${outEden};
 
@@ -214,11 +223,84 @@ const REQUESTY_FALLBACK = ${outRequesty};
   console.log('Successfully wrote data.js!');
 }
 
+// Whitelist of fields each provider's model objects must keep.
+// These are the only fields app.js reads. Anything else is dead weight in the shipped bundle.
+// Mirror of the field accesses in app.js (addOffer, getOfferInputCost, getOfferOutputCost, getModelCreator).
+const FIELD_ALLOWLIST = {
+  // id is always read; pricing/model_info are read for cost; context* for the size column; etc.
+  all: ['id'],
+  cortecs: ['id', 'owned_by', 'context_size', 'supported_features', 'pricing'],
+  mammouth: ['id', 'model_info'],
+  mistral: ['id', 'pricing'],
+  edenai: ['id', 'owned_by', 'context_length', 'pricing'],
+  opper: ['id', 'provider_display_name', 'context_window', 'pricing'],
+  eurouter: ['id', 'author_info', 'context_length', 'pricing'],
+  requesty: ['id', 'input_price', 'output_price', 'context_window'],
+  // Pricing subfields app.js reads; strip cache/audio/image/search/DBu variants and the duplicated list_pricing.
+  pricing: {
+    cortecs: ['input_token', 'output_token'],
+    mistral: ['input_token', 'output_token'],
+    edenai: ['input_cost_per_token', 'output_cost_per_token'],
+    opper: ['input', 'output'],
+    eurouter: ['prompt', 'completion', 'currency'],
+    requesty: null, // requesty pricing sits at the top level (input_price/output_price), not in .pricing
+  },
+  // Nested model_info fields Mammouth needs (token caps + per-token costs).
+  model_info: {
+    mammouth: ['max_input_tokens', 'max_output_tokens', 'input_cost_per_token', 'output_cost_per_token'],
+  },
+  // Cortecs feature flags used for tag inference.
+  supported_features: {
+    cortecs: true, // keep the whole array
+  },
+  // EURouter's display_name under author_info is the only nested thing we read.
+  author_info: {
+    eurouter: ['display_name'],
+  },
+};
+
+function pickFields(provider, model) {
+  if (!model || typeof model !== 'object') return model;
+  const allowed = new Set([...FIELD_ALLOWLIST.all, ...(FIELD_ALLOWLIST[provider] || [])]);
+  const trimmed = {};
+  for (const key of allowed) {
+    if (!(key in model)) continue;
+    trimmed[key] = pruneNested(provider, key, model[key]);
+  }
+  return trimmed;
+}
+
+function pruneNested(provider, key, value) {
+  if (Array.isArray(value)) {
+    return value.map(item => {
+      if (item && typeof item === 'object') {
+        const sub = FIELD_ALLOWLIST[key] && FIELD_ALLOWLIST[key][provider];
+        if (sub && sub !== true && Array.isArray(sub)) {
+          const out = {};
+          for (const k of sub) if (k in item) out[k] = item[k];
+          return out;
+        }
+      }
+      return item;
+    });
+  }
+  if (value && typeof value === 'object') {
+    const sub = FIELD_ALLOWLIST[key] && FIELD_ALLOWLIST[key][provider];
+    if (sub === true) return value; // keep whole object
+    if (sub && Array.isArray(sub)) {
+      const out = {};
+      for (const k of sub) if (k in value) out[k] = value[k];
+      return out;
+    }
+  }
+  return value;
+}
+
 function extractFallbackVariable(content, varName) {
   if (!content) return '[]';
   const startIdx = content.indexOf(`const ${varName} =`);
   if (startIdx === -1) return '[]';
-  
+
   let bracketCount = 0;
   let inString = false;
   let stringChar = '';
@@ -226,17 +308,17 @@ function extractFallbackVariable(content, varName) {
   while (i < content.length && content[i] !== '[' && content[i] !== '{') {
     i++;
   }
-  
+
   if (i >= content.length) return '[]';
-  
+
   const startChar = content[i];
   const endChar = startChar === '[' ? ']' : '}';
   let result = '';
-  
+
   while (i < content.length) {
     const char = content[i];
     result += char;
-    
+
     if ((char === '"' || char === "'") && content[i - 1] !== '\\') {
       if (!inString) {
         inString = true;
@@ -245,7 +327,7 @@ function extractFallbackVariable(content, varName) {
         inString = false;
       }
     }
-    
+
     if (!inString) {
       if (char === startChar) bracketCount++;
       if (char === endChar) bracketCount--;
@@ -253,7 +335,7 @@ function extractFallbackVariable(content, varName) {
     }
     i++;
   }
-  
+
   return result;
 }
 

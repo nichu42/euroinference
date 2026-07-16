@@ -5290,7 +5290,7 @@ const CORTECTS_FALLBACK = [
   }
 ];
 
-const EXCHANGE_RATE_FALLBACK = {
+const EXCHANGE_RATE = {
   "date": "2026-07-17",
   "base": "EUR",
   "quote": "USD",

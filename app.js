@@ -10,16 +10,23 @@ let edenaiModels = [];
 let opperModels = [];
 let eurouterModels = [];
 let requestyModels = [];
-let exchangeRate = 1.1406; // Default ECB rate (1 EUR = 1.1406 USD)
-let exchangeRateDate = '2026-07-15';
+let exchangeRate = 1.1406; // Overwritten at init from data.js EXCHANGE_RATE constant
+let exchangeRateDate = '2026-07-15'; // Overwritten at init from data.js EXCHANGE_RATE constant
 let selectedCurrency = 'EUR'; // 'EUR' or 'USD'
 
 // Filter state
 let searchQuery = '';
 let activeTab = 'all'; // 'all', 'matched', 'mammouth', 'cortecs'
-let selectedProvider = 'all'; // 'all', 'matched', 'mammouth', 'cortecs'
+let selectedProvider = []; // array of selected provider filter values; empty = no filter
 let selectedCreator = 'all'; // 'all' or specific creator name
 let selectedTag = 'all'; // 'all' or specific capability tag
+
+// Workload estimator inputs (used to compute the "Cost (your workload)" column).
+// Defaults: 10K input / 1K output tokens — near the OpenRouter 2025 medians with light headroom.
+// 0 = no minimum context filter (the table already skews long-context; 87% of models are 128K+).
+let minContextSize = 0;
+let workloadInputTokens = 10000;
+let workloadOutputTokens = 1000;
 
 // Sorting state
 let currentSortColumn = 'id';
@@ -71,61 +78,43 @@ const CREATOR_NAMES = {
 // --- DATA FETCHING & INITIALIZATION ---
 
 async function init() {
-  await fetchExchangeRate();
+  loadExchangeRate();
   await fetchModels();
-  
+
   processAndUnifyModels();
   setupUIEventListeners();
   renderCreatorsFilter();
   applyFiltersAndRender();
 }
 
-async function fetchExchangeRate() {
-  const exchangeRateBanner = document.getElementById('exchange-rate-val');
-  try {
-    const response = await fetch('https://api.frankfurter.dev/v2/rates?base=EUR&quotes=USD');
-    if (!response.ok) throw new Error('Network response not ok');
-    const data = await response.json();
-    
-    if (Array.isArray(data) && data[0]) {
-      exchangeRate = data[0].rate;
-      exchangeRateDate = data[0].date;
-    } else if (data && data.rate) {
-      exchangeRate = data.rate;
-      exchangeRateDate = data.date;
-    } else if (data && data.rates && data.rates.USD) {
-      exchangeRate = data.rates.USD;
-      exchangeRateDate = data.date;
-    } else {
-      throw new Error('Unknown response shape');
-    }
-    console.log(`Live exchange rate loaded: 1 EUR = ${exchangeRate} USD (${exchangeRateDate})`);
-  } catch (err) {
-    console.warn('Could not fetch live exchange rate from Frankfurter, using fallback:', err);
-    
-    const fallback = EXCHANGE_RATE_FALLBACK;
-    if (fallback) {
-      if (Array.isArray(fallback) && fallback[0]) {
-        exchangeRate = fallback[0].rate;
-        exchangeRateDate = fallback[0].date;
-      } else if (fallback.rate) {
-        exchangeRate = fallback.rate;
-        exchangeRateDate = fallback.date;
-      } else if (fallback.rates && fallback.rates.USD) {
-        exchangeRate = fallback.rates.USD;
-        exchangeRateDate = fallback.date;
-      }
+function loadExchangeRate() {
+  // Exchange rate is generated alongside model data by scripts/update_data.js
+  // (twice a day, via GitHub Actions) and shipped in data.js as the EXCHANGE_RATE constant.
+  // No network call is made at page load — see project rule: local connections only.
+  const rate = (typeof EXCHANGE_RATE !== 'undefined') ? EXCHANGE_RATE : null;
+  if (rate) {
+    if (Array.isArray(rate) && rate[0]) {
+      exchangeRate = rate[0].rate;
+      exchangeRateDate = rate[0].date;
+    } else if (rate.rate) {
+      exchangeRate = rate.rate;
+      exchangeRateDate = rate.date;
+    } else if (rate.rates && rate.rates.USD) {
+      exchangeRate = rate.rates.USD;
+      exchangeRateDate = rate.date;
     }
   }
+  const exchangeRateBanner = document.getElementById('exchange-rate-val');
   if (exchangeRateBanner) {
-    document.getElementById('exchange-rate-val').textContent = exchangeRate.toFixed(4);
+    exchangeRateBanner.textContent = exchangeRate.toFixed(4);
     const todayStr = new Date().toISOString().split('T')[0];
-    let dateTooltip = `Fetched reference date: ${exchangeRateDate}`;
+    let dateTooltip = `Reference date: ${exchangeRateDate}`;
     if (exchangeRateDate > todayStr) {
       dateTooltip += ' (ECB Next Business Day)';
     }
     document.getElementById('exchange-rate-banner').title = dateTooltip;
   }
+  console.log(`Exchange rate loaded from data.js: 1 EUR = ${exchangeRate} USD (${exchangeRateDate})`);
 }
 
 async function fetchModels() {
@@ -374,12 +363,15 @@ function processAndUnifyModels() {
         creator,
         context_size,
         tags,
-        offers: {}
+        offers: {},
+        supportsReasoning: {}
       };
       groups.push(group);
     }
     
     group.offers[provider] = rawModel;
+    group.supportsReasoning[provider] = idLower.includes('research') || idLower.includes('reason') || idLower.includes('r1') ||
+      (provider === 'cortecs' && Array.isArray(rawModel.supported_features) && rawModel.supported_features.includes('reasoning'));
     
     if (provider === 'cortecs') {
       group.creator = getCleanCreatorName(rawModel.owned_by);
@@ -412,6 +404,7 @@ function processAndUnifyModels() {
       context_size: g.context_size,
       tags: g.tags,
       offers: g.offers,
+      supportsReasoning: g.supportsReasoning,
       matched: Object.keys(g.offers).length >= 2,
       cortecs: g.offers.cortecs || null,
       mammouth: g.offers.mammouth || null,
@@ -548,6 +541,35 @@ function getOutputCostPerMillion(modelObj, currency = selectedCurrency) {
   return activeOffers.length > 0 ? Math.min(...activeOffers) : 0;
 }
 
+function getInputCostPerMillionWithReasoning(modelObj, currency = selectedCurrency) {
+  const activeOffers = [];
+  for (const [providerId, offer] of Object.entries(modelObj.offers)) {
+    if (!modelObj.supportsReasoning || !modelObj.supportsReasoning[providerId]) continue;
+    const cost = getOfferInputCost(providerId, offer, currency);
+    if (cost !== null) activeOffers.push(cost);
+  }
+  return activeOffers.length > 0 ? Math.min(...activeOffers) : null;
+}
+
+function getOutputCostPerMillionWithReasoning(modelObj, currency = selectedCurrency) {
+  const activeOffers = [];
+  for (const [providerId, offer] of Object.entries(modelObj.offers)) {
+    if (!modelObj.supportsReasoning || !modelObj.supportsReasoning[providerId]) continue;
+    const cost = getOfferOutputCost(providerId, offer, currency);
+    if (cost !== null) activeOffers.push(cost);
+  }
+  return activeOffers.length > 0 ? Math.min(...activeOffers) : null;
+}
+
+// Total cost for a representative workload using the model's best offer.
+// Uses workloadInputTokens / workloadOutputTokens (per 1M tokens → /1,000,000).
+function getWorkloadCost(modelObj, currency = selectedCurrency) {
+  const inCost = getInputCostPerMillion(modelObj, currency);
+  const outCost = getOutputCostPerMillion(modelObj, currency);
+  if (inCost === 0 || outCost === 0) return 0;
+  return (inCost * workloadInputTokens + outCost * workloadOutputTokens) / 1000000;
+}
+
 function getBestProviderDetails(modelObj, currency = selectedCurrency) {
   const activeOffers = [];
   for (const [providerId, offer] of Object.entries(modelObj.offers)) {
@@ -616,20 +638,23 @@ function applyFiltersAndRender() {
       if (!m.id.toLowerCase().includes(q) && !cleanName.includes(q)) return false;
     }
 
-    // 2. Source / Provider Select
-    if (selectedProvider !== 'all') {
-      if (selectedProvider === 'matched' && !m.matched) return false;
-      if (selectedProvider === 'mammouth' && !m.offers.mammouth) return false;
-      if (selectedProvider === 'cortecs' && !m.offers.cortecs) return false;
-      if (selectedProvider === 'mistral' && !m.offers.mistral) return false;
-      if (selectedProvider === 'edenai' && !m.offers.edenai) return false;
-      if (selectedProvider === 'opper' && !m.offers.opper) return false;
-      if (selectedProvider === 'eurouter' && !m.offers.eurouter) return false;
-      if (selectedProvider === 'requesty' && !m.offers.requesty) return false;
+    // 2. Source / Provider Select (multi)
+    if (selectedProvider.length > 0) {
+      let showRow = false;
+      for (const sel of selectedProvider) {
+        if (sel === 'matched' && m.matched) { showRow = true; break; }
+        if (m.offers[sel]) { showRow = true; break; }
+      }
+      if (!showRow) return false;
     }
 
     // 3. Creator Select
     if (selectedCreator !== 'all' && m.creator !== selectedCreator) return false;
+
+    // 4. Min Context Size Filter
+    if (minContextSize > 0) {
+      if (!m.context_size || m.context_size < minContextSize) return false;
+    }
 
     return true;
   });
@@ -666,6 +691,16 @@ function applyFiltersAndRender() {
         const pctB = detailsB && detailsB.savingsTag ? parseInt(detailsB.savingsTag.replace(/[^0-9]/g, '')) : -1;
         valA = pctA;
         valB = pctB;
+        break;
+      case 'reasoning':
+        // Sort by total reasoning-aware cost (input + output), lowest first.
+        valA = (() => { const i = getInputCostPerMillionWithReasoning(a); const o = getOutputCostPerMillionWithReasoning(a); return (i === null || o === null) ? Infinity : i + o; })();
+        valB = (() => { const i = getInputCostPerMillionWithReasoning(b); const o = getOutputCostPerMillionWithReasoning(b); return (i === null || o === null) ? Infinity : i + o; })();
+        break;
+      case 'workload':
+        // Sort by workload cost (lowest first); push models with no pricing to the bottom.
+        valA = getWorkloadCost(a) || Infinity;
+        valB = getWorkloadCost(b) || Infinity;
         break;
       default:
         valA = a.id;
@@ -711,10 +746,17 @@ function renderTable(models) {
   const tbody = document.getElementById('models-table-body');
   if (!tbody) return;
 
+  // Distinguish "still loading / no data yet" from "filters returned nothing".
+  // Before unifiedModels is populated, models.length === 0 because init() hasn't run.
   if (models.length === 0) {
+    const isInitialLoad = (typeof unifiedModels === 'undefined' || unifiedModels.length === 0);
+    if (isInitialLoad) {
+      // Keep the static <tr id="loading-row"> that lives in index.html; nothing to do.
+      return;
+    }
     tbody.innerHTML = `
       <tr>
-        <td colspan="7">
+        <td colspan="9">
           <div class="empty-state">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
             <p>No models match your filter criteria.</p>
@@ -757,11 +799,61 @@ function renderTable(models) {
     const bestDetails = getBestProviderDetails(m);
     let bestProviderHtml = '<span style="color: var(--text-dark);">N/A</span>';
     if (bestDetails) {
-      const savingsBadge = bestDetails.savingsTag 
-        ? `<span class="savings-tag" style="font-size:0.65rem; padding: 2px 6px; margin-left: 6px; box-shadow: none; vertical-align: middle;">${bestDetails.savingsTag}</span>` 
+      // Build a tooltip with all providers and their markup vs. the cheapest.
+      const allOfferCosts = Object.entries(m.offers)
+        .map(([pid, offer]) => {
+          const ic = getOfferInputCost(pid, offer);
+          const oc = getOfferOutputCost(pid, offer);
+          if (ic === null || oc === null) return null;
+          return { pid, name: providerNames[pid] || pid, total: ic + oc };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.total - b.total);
+      const bestTotal = allOfferCosts.length ? allOfferCosts[0].total : null;
+      const tooltipLines = allOfferCosts.map(o => {
+        if (bestTotal && o.total > bestTotal) {
+          const mult = (o.total / bestTotal).toFixed(1);
+          return `${o.name} ${mult}×`;
+        }
+        return `${o.name} (best)`;
+      });
+      const tooltipAttr = tooltipLines.length > 1
+        ? ` title="All providers (sorted by cost):\n${tooltipLines.join('\n')}"`
         : '';
-      bestProviderHtml = `<span style="font-weight:600; color:#fff;">${bestDetails.providerName}</span>${savingsBadge}`;
+      const savingsBadge = bestDetails.savingsTag
+        ? `<span class="savings-tag" style="font-size:0.65rem; padding: 2px 6px; margin-left: 6px; box-shadow: none; vertical-align: middle;">${bestDetails.savingsTag}</span>`
+        : '';
+      bestProviderHtml = `<span style="font-weight:600; color:#fff; cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.3);"${tooltipAttr}>${bestDetails.providerName}</span>${savingsBadge}`;
     }
+
+    // Best w/ Reasoning column
+    const reasonIn = getInputCostPerMillionWithReasoning(m);
+    const reasonOut = getOutputCostPerMillionWithReasoning(m);
+    const hasReasoning = reasonIn !== null && reasonOut !== null;
+    const reasonTotal = hasReasoning ? reasonIn + reasonOut : null;
+    const bestTotalAll = (() => {
+      const ic = getInputCostPerMillion(m);
+      const oc = getOutputCostPerMillion(m);
+      return ic + oc;
+    })();
+    let reasoningHtml = '<span style="color: var(--text-dark);">—</span>';
+    if (hasReasoning) {
+      const reasonInFmt = formatCurrency(reasonIn);
+      const reasonOutFmt = formatCurrency(reasonOut);
+      const reasonTotalFmt = formatCurrency(reasonTotal);
+      const premium = bestTotalAll > 0 ? ((reasonTotal - bestTotalAll) / bestTotalAll * 100).toFixed(0) : '0';
+      const premiumSign = reasonTotal > bestTotalAll ? '+' : '';
+      const reasonTooltip = `Reasoning: ${reasonInFmt} input + ${reasonOutFmt} output = ${reasonTotalFmt} / 1M\n${premiumSign}${premium}% vs. best non-reasoning`;
+      reasoningHtml = `<span title="${reasonTooltip}" style="cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.3);">${reasonTotalFmt}</span>`;
+    }
+
+    // Cost (your workload) column — uses the same "best offer" as the per-million columns.
+    const workloadCost = getWorkloadCost(m);
+    const workloadFmt = workloadCost > 0 ? formatCurrency(workloadCost) : '—';
+    const workloadTooltip = workloadCost > 0
+      ? `Cheapest offer: ${formatCurrency(inputCost)} input + ${formatCurrency(outputCost)} output per 1M\n(${workloadInputTokens.toLocaleString()} in + ${workloadOutputTokens.toLocaleString()} out) × rate ÷ 1,000,000`
+      : 'No pricing data available';
+    const workloadHtml = `<span title="${workloadTooltip}" style="cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.3);">${workloadFmt}</span>`;
 
     return `
       <tr class="clickable-row" onclick="openComparison('${m.id}')" title="Click to view details and comparison">
@@ -782,6 +874,8 @@ function renderTable(models) {
         <td style="font-family: var(--font-mono);">${contextStr}</td>
         <td style="font-family: var(--font-mono);">${formatCurrency(inputCost)}</td>
         <td style="font-family: var(--font-mono);">${formatCurrency(outputCost)}</td>
+        <td style="font-family: var(--font-mono);">${reasoningHtml}</td>
+        <td style="font-family: var(--font-mono);">${workloadHtml}</td>
         <td>${bestProviderHtml}</td>
       </tr>
     `;
@@ -985,7 +1079,7 @@ function setupUIEventListeners() {
   const filterSourceSelect = document.getElementById('filter-source');
   if (filterSourceSelect) {
     filterSourceSelect.addEventListener('change', (e) => {
-      selectedProvider = e.target.value;
+      selectedProvider = Array.from(e.target.selectedOptions).map(o => o.value);
       applyFiltersAndRender();
     });
   }
@@ -996,6 +1090,42 @@ function setupUIEventListeners() {
       selectedCreator = e.target.value;
       applyFiltersAndRender();
     });
+  }
+
+  // 2b. Workload estimator inputs
+  const minContextInput = document.getElementById('filter-min-context');
+  if (minContextInput) {
+    const handler = (e) => {
+      const v = parseInt(e.target.value, 10);
+      minContextSize = isNaN(v) || v < 0 ? 0 : v;
+      applyFiltersAndRender();
+    };
+    minContextInput.addEventListener('input', handler);
+    minContextInput.addEventListener('change', handler);
+  }
+  const inputTokensInput = document.getElementById('filter-input-tokens');
+  if (inputTokensInput) {
+    const handler = (e) => {
+      const v = parseInt(e.target.value, 10);
+      if (!isNaN(v) && v > 0) {
+        workloadInputTokens = v;
+        applyFiltersAndRender();
+      }
+    };
+    inputTokensInput.addEventListener('input', handler);
+    inputTokensInput.addEventListener('change', handler);
+  }
+  const outputTokensInput = document.getElementById('filter-output-tokens');
+  if (outputTokensInput) {
+    const handler = (e) => {
+      const v = parseInt(e.target.value, 10);
+      if (!isNaN(v) && v > 0) {
+        workloadOutputTokens = v;
+        applyFiltersAndRender();
+      }
+    };
+    outputTokensInput.addEventListener('input', handler);
+    outputTokensInput.addEventListener('change', handler);
   }
 
   // Prevent sorting when clicking inside header filter inputs/selects

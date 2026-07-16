@@ -1128,6 +1128,121 @@ table.models-table tr.clickable-row:hover td {
   color: var(--text-dark);
 }
 
+/* Multi-select source filter (taller, scrollable) */
+#filter-source[multiple] {
+  height: auto;
+  min-width: 150px;
+  max-height: 180px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 4px;
+  overflow-y: auto;
+}
+#filter-source[multiple] option:checked {
+  background: var(--savings-bg, rgba(16, 185, 129, 0.2));
+  color: #fff;
+}
+
+/* Workload estimator panel above the table. */
+.workload-panel {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  border-radius: 10px;
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 1rem;
+}
+.workload-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, max-content)) 1fr;
+  gap: 0.85rem 1.5rem;
+  align-items: center;
+}
+.workload-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.workload-label {
+  font-weight: 600;
+  color: var(--text-dark);
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.workload-field input {
+  width: 110px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 5px 8px;
+  border-radius: 5px;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.workload-field input::-webkit-outer-spin-button,
+.workload-field input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.workload-field input:focus {
+  border-color: var(--savings-color, #10b981);
+}
+.workload-suffix {
+  color: var(--text-dark);
+  font-size: 0.72rem;
+}
+.workload-hint {
+  font-size: 0.72rem;
+  color: var(--text-dark);
+  line-height: 1.4;
+  text-align: right;
+}
+.workload-hint code {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+@media (max-width: 720px) {
+  .workload-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .workload-hint {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+}
+
+/* Initial loading state shown in the table body before data.js has populated it. */
+.loading-state {
+  padding: 3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  color: var(--text-muted);
+}
+.loading-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(255, 255, 255, 0.08);
+  border-top-color: var(--savings-color, #10b981);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+.loading-text {
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  opacity: 0.7;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Cost Bar Visualization inside Table */
 .cost-bar-container {
   display: flex;
