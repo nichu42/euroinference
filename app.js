@@ -319,6 +319,7 @@ function processAndUnifyModels() {
   
   function addOffer(provider, rawModel) {
     let group = findGroup(rawModel.id);
+    const idLower = rawModel.id.toLowerCase();
     if (!group) {
       const cleanBaseId = getCleanModelId(rawModel.id);
       const canonicalId = STRICT_ALIASES[cleanBaseId] || cleanBaseId;
@@ -348,7 +349,6 @@ function processAndUnifyModels() {
       else if (provider === 'requesty') context_size = rawModel.context_window;
       
       const tags = [];
-      const idLower = rawModel.id.toLowerCase();
       if (idLower.includes('vision') || idLower.includes('image')) tags.push('Image');
       if (idLower.includes('code') || idLower.includes('codex') || idLower.includes('coder') || idLower.includes('devstral')) tags.push('Code');
       if (idLower.includes('tool')) tags.push('Tools');
