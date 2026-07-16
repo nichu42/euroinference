@@ -776,21 +776,22 @@ function renderTable(models) {
       ? m.context_size.toLocaleString() 
       : '<span style="color: var(--text-dark);">Unknown</span>';
 
+    const providerNames = {
+      mammouth: 'Mammouth AI',
+      cortecs: 'Cortecs',
+      mistral: 'Mistral AI',
+      edenai: 'Eden AI',
+      opper: 'Opper AI',
+      eurouter: 'EURouter',
+      requesty: 'Requesty AI'
+    };
+
     // Provider badges list
     const availableProvidersHtml = Object.keys(m.offers).map(providerId => {
       let badgeClass = 'badge-both';
       if (providerId === 'mammouth') badgeClass = 'badge-mammouth';
       else if (providerId === 'cortecs') badgeClass = 'badge-cortecs';
       
-      const providerNames = {
-        mammouth: 'Mammouth AI',
-        cortecs: 'Cortecs',
-        mistral: 'Mistral AI',
-        edenai: 'Eden AI',
-        opper: 'Opper AI',
-        eurouter: 'EURouter',
-        requesty: 'Requesty AI'
-      };
       const providerName = providerNames[providerId] || providerId;
       return `<span class="badge ${badgeClass}" style="margin-right: 4px; font-size: 0.7rem;">${providerName}</span>`;
     }).join('');
