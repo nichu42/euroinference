@@ -83,13 +83,36 @@ async function fetchExchangeRate() {
     const response = await fetch('https://api.frankfurter.dev/v2/rates?base=EUR&quotes=USD');
     if (!response.ok) throw new Error('Network response not ok');
     const data = await response.json();
-    exchangeRate = data[0].rate;
-    exchangeRateDate = data[0].date;
+    
+    if (Array.isArray(data) && data[0]) {
+      exchangeRate = data[0].rate;
+      exchangeRateDate = data[0].date;
+    } else if (data && data.rate) {
+      exchangeRate = data.rate;
+      exchangeRateDate = data.date;
+    } else if (data && data.rates && data.rates.USD) {
+      exchangeRate = data.rates.USD;
+      exchangeRateDate = data.date;
+    } else {
+      throw new Error('Unknown response shape');
+    }
     console.log(`Live exchange rate loaded: 1 EUR = ${exchangeRate} USD (${exchangeRateDate})`);
   } catch (err) {
     console.warn('Could not fetch live exchange rate from Frankfurter, using fallback:', err);
-    exchangeRate = EXCHANGE_RATE_FALLBACK.rates.USD;
-    exchangeRateDate = EXCHANGE_RATE_FALLBACK.date;
+    
+    const fallback = EXCHANGE_RATE_FALLBACK;
+    if (fallback) {
+      if (Array.isArray(fallback) && fallback[0]) {
+        exchangeRate = fallback[0].rate;
+        exchangeRateDate = fallback[0].date;
+      } else if (fallback.rate) {
+        exchangeRate = fallback.rate;
+        exchangeRateDate = fallback.date;
+      } else if (fallback.rates && fallback.rates.USD) {
+        exchangeRate = fallback.rates.USD;
+        exchangeRateDate = fallback.date;
+      }
+    }
   }
   if (exchangeRateBanner) {
     document.getElementById('exchange-rate-val').textContent = exchangeRate.toFixed(4);
