@@ -126,91 +126,134 @@ async function fetchExchangeRate() {
 }
 
 async function fetchModels() {
-  // 1. Fetch Mammouth
-  try {
-    const response = await fetch('https://api.mammouth.ai/public/models');
-    if (!response.ok) throw new Error();
-    const payload = await response.json();
-    mammouthModels = payload.data;
-    console.log('Fetched live Mammouth AI models:', mammouthModels.length);
-  } catch (err) {
-    console.warn('Could not fetch live Mammouth AI models, using fallback cache');
-    mammouthModels = (typeof MAMMOUTH_FALLBACK !== 'undefined') ? MAMMOUTH_FALLBACK : [];
-  }
-
-  // 2. Fetch Cortecs
-  try {
-    const response = await fetch('https://api.cortecs.ai/v1/models');
-    if (!response.ok) throw new Error();
-    const payload = await response.json();
-    cortecsModels = payload.data;
-    console.log('Fetched live Cortecs models:', cortecsModels.length);
-  } catch (err) {
-    console.warn('Could not fetch live Cortecs models, using fallback cache');
-    cortecsModels = (typeof CORTECTS_FALLBACK !== 'undefined') ? CORTECTS_FALLBACK : [];
-  }
-
-  // 3. Load Mistral AI
+  console.log('Loading model data from local fallback cache...');
+  mammouthModels = (typeof MAMMOUTH_FALLBACK !== 'undefined') ? MAMMOUTH_FALLBACK : [];
+  cortecsModels = (typeof CORTECTS_FALLBACK !== 'undefined') ? CORTECTS_FALLBACK : [];
   mistralModels = (typeof MISTRAL_FALLBACK !== 'undefined') ? MISTRAL_FALLBACK : [];
-  console.log('Loaded Mistral AI models snapshot:', mistralModels.length);
-
-  // 4. Fetch Eden AI
-  try {
-    const response = await fetch('https://api.edenai.run/v3/models');
-    if (!response.ok) throw new Error();
-    const payload = await response.json();
-    edenaiModels = payload.data;
-    console.log('Fetched live Eden AI models:', edenaiModels.length);
-  } catch (err) {
-    console.warn('Could not fetch live Eden AI models, using fallback cache');
-    edenaiModels = (typeof EDENAI_FALLBACK !== 'undefined') ? EDENAI_FALLBACK : [];
-  }
-
-  // 5. Fetch Opper AI
-  try {
-    const response = await fetch('https://api.opper.ai/v3/models');
-    if (!response.ok) throw new Error();
-    const payload = await response.json();
-    opperModels = payload.models;
-    console.log('Fetched live Opper AI models:', opperModels.length);
-  } catch (err) {
-    console.warn('Could not fetch live Opper AI models, using fallback cache');
-    opperModels = (typeof OPPER_FALLBACK !== 'undefined') ? OPPER_FALLBACK : [];
-  }
-
-  // 6. Fetch EURouter
-  try {
-    const response = await fetch('https://api.eurouter.ai/api/v1/models');
-    if (!response.ok) throw new Error();
-    const payload = await response.json();
-    eurouterModels = payload.data;
-    console.log('Fetched live EURouter models:', eurouterModels.length);
-  } catch (err) {
-    console.warn('Could not fetch live EURouter models, using fallback cache');
-    eurouterModels = (typeof EUROUTER_FALLBACK !== 'undefined') ? EUROUTER_FALLBACK : [];
-  }
-
-  // 7. Fetch Requesty AI
-  try {
-    const response = await fetch('https://router.requesty.ai/v1/models');
-    if (!response.ok) throw new Error();
-    const payload = await response.json();
-    requestyModels = payload.data;
-    console.log('Fetched live Requesty AI models:', requestyModels.length);
-  } catch (err) {
-    console.warn('Could not fetch live Requesty AI models, using fallback cache');
-    requestyModels = (typeof REQUESTY_FALLBACK !== 'undefined') ? REQUESTY_FALLBACK : [];
-  }
+  edenaiModels = (typeof EDENAI_FALLBACK !== 'undefined') ? EDENAI_FALLBACK : [];
+  opperModels = (typeof OPPER_FALLBACK !== 'undefined') ? OPPER_FALLBACK : [];
+  eurouterModels = (typeof EUROUTER_FALLBACK !== 'undefined') ? EUROUTER_FALLBACK : [];
+  requestyModels = (typeof REQUESTY_FALLBACK !== 'undefined') ? REQUESTY_FALLBACK : [];
+  
+  console.log('Loaded models count:', 
+    mammouthModels.length, cortecsModels.length, mistralModels.length,
+    edenaiModels.length, opperModels.length, eurouterModels.length, requestyModels.length
+  );
 }
 
 // --- NORMALIZATION & MATCHING ENGINE ---
 
+function getCleanModelId(id) {
+  if (!id) return '';
+  let clean = id.toLowerCase();
+  
+  if (clean.includes('/')) {
+    clean = clean.split('/').pop();
+  }
+  
+  if (clean.includes(':')) {
+    clean = clean.split(':').pop();
+  }
+  
+  if (clean.includes('@')) {
+    clean = clean.split('@')[0];
+  }
+  
+  clean = clean.replace(/^(anthropic|openai|google|meta|cohere|mistral|amazon|ibm|alibaba|zhipu|moonshot|microsoft|snowflake|deepseek|ai21)\./i, '');
+  clean = clean.replace(/-v\d+$/i, '');
+  
+  return clean;
+}
+
 function normalizeSlug(slug) {
   if (!slug) return '';
-  return slug.toLowerCase()
+  const clean = getCleanModelId(slug);
+  return clean
     .replace(/[-_.]/g, '')
     .replace(/(chat|preview|instruct|it|image|latest|highspeed|customtools|coder|scout|maverick|v\d+)/g, '')
     .trim();
+}
+
+function getHumanFriendlyName(id) {
+  if (!id) return '';
+  let name = getCleanModelId(id);
+  
+  const manualMappings = {
+    'gpt-4o': 'GPT-4o',
+    'gpt-4o-mini': 'GPT-4o Mini',
+    'gpt-4-turbo': 'GPT-4 Turbo',
+    'gpt-3.5-turbo': 'GPT-3.5 Turbo',
+    'gpt-4': 'GPT-4',
+    'gpt-5.1-chat': 'GPT-5.1 Chat',
+    'gpt-5.1-codex-max': 'GPT-5.1 Codex Max',
+    'claude-3-5-sonnet': 'Claude 3.5 Sonnet',
+    'claude-3-opus': 'Claude 3 Opus',
+    'claude-3-sonnet': 'Claude 3 Sonnet',
+    'claude-3-haiku': 'Claude 3 Haiku',
+    'claude-3.5-haiku': 'Claude 3.5 Haiku',
+    'claude-opus-4-5': 'Claude 4.5 Opus',
+    'claude-opus-4-6': 'Claude 4.6 Opus',
+    'claude-opus-4-7': 'Claude 4.7 Opus',
+    'claude-opus-4-8': 'Claude 4.8 Opus',
+    'claude-sonnet-4-5': 'Claude 4.5 Sonnet',
+    'claude-sonnet-4-6': 'Claude 4.6 Sonnet',
+    'claude-4-6-sonnet': 'Claude 4.6 Sonnet',
+    'claude-4-5-sonnet': 'Claude 4.5 Sonnet',
+    'gemini-1.5-pro': 'Gemini 1.5 Pro',
+    'gemini-1.5-flash': 'Gemini 1.5 Flash',
+    'gemini-2.0-flash': 'Gemini 2.0 Flash',
+    'gemini-2.0-pro-exp': 'Gemini 2.0 Pro (Experimental)',
+    'gemini-3.1-pro-preview': 'Gemini 3.1 Pro (Preview)',
+    'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (Preview)',
+    'gemini-3.1-flash-image-preview': 'Gemini 3.1 Flash-Image (Preview)',
+    'deepseek-chat': 'DeepSeek V3 (Chat)',
+    'deepseek-coder': 'DeepSeek Coder',
+    'deepseek-reasoner': 'DeepSeek R1 (Reasoner)',
+    'deepseek-r1': 'DeepSeek R1',
+    'deepseek-r1-0528': 'DeepSeek R1 (0528)',
+    'llama-3-8b-instruct': 'Llama 3 8B (Instruct)',
+    'llama-3-70b-instruct': 'Llama 3 70B (Instruct)',
+    'llama-3.1-8b-instruct': 'Llama 3.1 8B (Instruct)',
+    'llama-3.1-70b-instruct': 'Llama 3.1 70B (Instruct)',
+    'llama-3.1-405b-instruct': 'Llama 3.1 405B (Instruct)',
+    'llama-3.3-70b-instruct': 'Llama 3.3 70B (Instruct)',
+    'mistral-large': 'Mistral Large',
+    'mistral-medium': 'Mistral Medium',
+    'mistral-small': 'Mistral Small',
+    'mistral-nemo': 'Mistral Nemo',
+    'codestral': 'Codestral',
+    'qwen3-vl-flash': 'Qwen 3 VL Flash',
+    'qwen3.6-27b': 'Qwen 3.6 27B',
+    'qwen-2.5-72b-instruct': 'Qwen 2.5 72B (Instruct)',
+    'glm-4-flash': 'GLM 4 Flash',
+    'glm-5-turbo': 'GLM 5 Turbo',
+    'grok-2-beta': 'Grok 2 Beta',
+    'grok-2': 'Grok 2',
+    'sonar-small-chat': 'Sonar Small Chat',
+    'sonar-medium-chat': 'Sonar Medium Chat'
+  };
+
+  const lower = name.toLowerCase().trim();
+  if (manualMappings[lower]) {
+    return manualMappings[lower];
+  }
+
+  name = name.replace(/-(eu|us|global)$/i, '');
+  name = name.replace(/(\d+)-(\d+)/g, '$1.$2');
+  
+  return name
+    .split(/[-_]/)
+    .map(word => {
+      if (!word) return '';
+      if (/^\d+[bB]$/.test(word)) {
+        return word.toUpperCase();
+      }
+      if (['gpt', 'llm', 'moe', 'ecb', 'api', 'vl'].includes(word.toLowerCase())) {
+        return word.toUpperCase();
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(' ');
 }
 
 let unifiedModels = [];
@@ -265,14 +308,16 @@ function processAndUnifyModels() {
   
   function findGroup(id) {
     const slug = normalizeSlug(id);
-    const digits = id.replace(/[^0-9]/g, '');
-    const canonicalId = STRICT_ALIASES[id] || id;
+    const cleanBaseId = getCleanModelId(id);
+    const digits = cleanBaseId.replace(/[^0-9]/g, '');
+    const canonicalId = STRICT_ALIASES[cleanBaseId] || cleanBaseId;
     
     return groups.find(g => {
       if (g.canonicalId === canonicalId) return true;
       
       const gSlug = normalizeSlug(g.canonicalId);
-      const gDigits = g.canonicalId.replace(/[^0-9]/g, '');
+      const gCleanBaseId = getCleanModelId(g.canonicalId);
+      const gDigits = gCleanBaseId.replace(/[^0-9]/g, '');
       return gSlug === slug && gDigits === digits;
     });
   }
@@ -280,7 +325,8 @@ function processAndUnifyModels() {
   function addOffer(provider, rawModel) {
     let group = findGroup(rawModel.id);
     if (!group) {
-      const canonicalId = STRICT_ALIASES[rawModel.id] || rawModel.id;
+      const cleanBaseId = getCleanModelId(rawModel.id);
+      const canonicalId = STRICT_ALIASES[cleanBaseId] || cleanBaseId;
       
       let creator = 'Other';
       if (provider === 'cortecs') {
@@ -376,31 +422,37 @@ function getOfferInputCost(providerId, offer, currency = selectedCurrency) {
   if (!offer) return null;
   
   if (providerId === 'cortecs') {
+    if (!offer.pricing || offer.pricing.input_token === undefined) return 0;
     const priceEur = offer.pricing.input_token;
     return currency === 'EUR' ? priceEur : priceEur * exchangeRate;
   }
   
   if (providerId === 'mammouth') {
+    if (!offer.model_info || offer.model_info.input_cost_per_token === undefined) return 0;
     const priceUsd = offer.model_info.input_cost_per_token * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
   
   if (providerId === 'mistral') {
+    if (!offer.pricing || offer.pricing.input_token === undefined) return 0;
     const priceUsd = offer.pricing.input_token;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
 
   if (providerId === 'edenai') {
+    if (!offer.pricing || offer.pricing.input_cost_per_token === undefined) return 0;
     const priceUsd = offer.pricing.input_cost_per_token * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
 
   if (providerId === 'opper') {
+    if (!offer.pricing || !Array.isArray(offer.pricing.input) || offer.pricing.input.length === 0) return 0;
     const priceUsd = offer.pricing.input[0];
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
 
   if (providerId === 'eurouter') {
+    if (!offer.pricing || offer.pricing.prompt === undefined) return 0;
     const origCur = offer.pricing.currency || 'EUR';
     const priceVal = parseFloat(offer.pricing.prompt) * 1000000;
     if (origCur === 'EUR') {
@@ -411,6 +463,7 @@ function getOfferInputCost(providerId, offer, currency = selectedCurrency) {
   }
 
   if (providerId === 'requesty') {
+    if (offer.input_price === undefined) return 0;
     const priceUsd = offer.input_price * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
@@ -422,31 +475,37 @@ function getOfferOutputCost(providerId, offer, currency = selectedCurrency) {
   if (!offer) return null;
   
   if (providerId === 'cortecs') {
+    if (!offer.pricing || offer.pricing.output_token === undefined) return 0;
     const priceEur = offer.pricing.output_token;
     return currency === 'EUR' ? priceEur : priceEur * exchangeRate;
   }
   
   if (providerId === 'mammouth') {
+    if (!offer.model_info || offer.model_info.output_cost_per_token === undefined) return 0;
     const priceUsd = offer.model_info.output_cost_per_token * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
   
   if (providerId === 'mistral') {
+    if (!offer.pricing || offer.pricing.output_token === undefined) return 0;
     const priceUsd = offer.pricing.output_token;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
 
   if (providerId === 'edenai') {
+    if (!offer.pricing || offer.pricing.output_cost_per_token === undefined) return 0;
     const priceUsd = offer.pricing.output_cost_per_token * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
 
   if (providerId === 'opper') {
+    if (!offer.pricing || !Array.isArray(offer.pricing.output) || offer.pricing.output.length === 0) return 0;
     const priceUsd = offer.pricing.output[0];
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
 
   if (providerId === 'eurouter') {
+    if (!offer.pricing || offer.pricing.completion === undefined) return 0;
     const origCur = offer.pricing.currency || 'EUR';
     const priceVal = parseFloat(offer.pricing.completion) * 1000000;
     if (origCur === 'EUR') {
@@ -457,6 +516,7 @@ function getOfferOutputCost(providerId, offer, currency = selectedCurrency) {
   }
 
   if (providerId === 'requesty') {
+    if (offer.output_price === undefined) return 0;
     const priceUsd = offer.output_price * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
@@ -546,7 +606,8 @@ function applyFiltersAndRender() {
     // 1. Model ID filter (Search Query)
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      if (!m.id.toLowerCase().includes(q)) return false;
+      const cleanName = getHumanFriendlyName(m.id).toLowerCase();
+      if (!m.id.toLowerCase().includes(q) && !cleanName.includes(q)) return false;
     }
 
     // 2. Source / Provider Select
@@ -690,7 +751,7 @@ function renderTable(models) {
     return `
       <tr class="clickable-row" onclick="openComparison('${m.id}')" title="Click to view details and comparison">
         <td>
-          <div style="font-weight: 600; color: #ffffff;">${m.id}</div>
+          <div style="font-weight: 600; color: #ffffff;">${getHumanFriendlyName(m.id)}</div>
           <div class="tag-list" style="margin-top: 4px;">
             ${m.tags.slice(0, 3).map(t => `<span class="tag-badge">${t}</span>`).join('')}
           </div>
@@ -733,7 +794,7 @@ function openModalWithSelection(modelObj) {
 
   if (!overlay || !modalContent) return;
 
-  document.getElementById('modal-title-text').textContent = `Model Specifications: ${modelObj.id}`;
+  document.getElementById('modal-title-text').textContent = getHumanFriendlyName(modelObj.id);
 
   const offersList = [];
   for (const [providerId, offer] of Object.entries(modelObj.offers)) {
@@ -817,8 +878,18 @@ function openModalWithSelection(modelObj) {
           <span class="badge ${badgeClass}">${off.providerName}</span>
           ${markupBadge}
         </div>
-        <div style="font-family:var(--font-title); font-size:1.1rem; font-weight:800; color:#fff; margin-bottom: 0.25rem; word-break:break-all;">${modelObj.id}</div>
-        <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700; margin-bottom:1.25rem;">Creator: ${creatorName}</div>
+        <div style="font-family:var(--font-title); font-size:1.1rem; font-weight:800; color:#fff; margin-bottom: 0.15rem; word-break:break-all;">${getHumanFriendlyName(modelObj.id)}</div>
+        <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700; margin-bottom: 1.15rem;">Creator: ${creatorName}</div>
+        
+        <div style="margin-bottom: 1.25rem;">
+          <span style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 4px;">API Model Slug</span>
+          <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 6px 10px; border-radius: 6px; justify-content:space-between; gap: 8px;">
+            <code style="font-family:var(--font-mono); font-size:0.8rem; color:#e2e8f0; word-break:break-all;">${off.offer.id}</code>
+            <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${off.offer.id}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; transition: color 0.15s;" title="Copy to clipboard">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+          </div>
+        </div>
         
         <div class="modal-field" style="margin-bottom: 1rem;">
           <span class="lbl" style="font-size:0.7rem; color:var(--text-dark); text-transform:uppercase; font-weight:700;">Input Price (per 1M)</span>
@@ -963,5 +1034,18 @@ function setupUIEventListeners() {
   });
 }
 
-// Start Application on DOM Content Loaded
-document.addEventListener('DOMContentLoaded', init);
+// Start Application on DOM Content Loaded or immediately if already loaded
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+
+// Global copy tooltip helper
+window.showCopyTooltip = function(btn) {
+  const origHtml = btn.innerHTML;
+  btn.innerHTML = '<span style="font-size:0.7rem; color:var(--savings-color); font-weight:700;">Copied!</span>';
+  setTimeout(() => {
+    btn.innerHTML = origHtml;
+  }, 1500);
+};
