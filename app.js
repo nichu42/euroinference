@@ -135,7 +135,7 @@ async function fetchModels() {
     console.log('Fetched live Mammouth AI models:', mammouthModels.length);
   } catch (err) {
     console.warn('Could not fetch live Mammouth AI models, using fallback cache');
-    mammouthModels = MAMMOUTH_FALLBACK;
+    mammouthModels = (typeof MAMMOUTH_FALLBACK !== 'undefined') ? MAMMOUTH_FALLBACK : [];
   }
 
   // 2. Fetch Cortecs
@@ -147,11 +147,11 @@ async function fetchModels() {
     console.log('Fetched live Cortecs models:', cortecsModels.length);
   } catch (err) {
     console.warn('Could not fetch live Cortecs models, using fallback cache');
-    cortecsModels = CORTECTS_FALLBACK;
+    cortecsModels = (typeof CORTECTS_FALLBACK !== 'undefined') ? CORTECTS_FALLBACK : [];
   }
 
   // 3. Load Mistral AI
-  mistralModels = MISTRAL_FALLBACK;
+  mistralModels = (typeof MISTRAL_FALLBACK !== 'undefined') ? MISTRAL_FALLBACK : [];
   console.log('Loaded Mistral AI models snapshot:', mistralModels.length);
 
   // 4. Fetch Eden AI
@@ -163,7 +163,7 @@ async function fetchModels() {
     console.log('Fetched live Eden AI models:', edenaiModels.length);
   } catch (err) {
     console.warn('Could not fetch live Eden AI models, using fallback cache');
-    edenaiModels = EDENAI_FALLBACK;
+    edenaiModels = (typeof EDENAI_FALLBACK !== 'undefined') ? EDENAI_FALLBACK : [];
   }
 
   // 5. Fetch Opper AI
@@ -175,7 +175,7 @@ async function fetchModels() {
     console.log('Fetched live Opper AI models:', opperModels.length);
   } catch (err) {
     console.warn('Could not fetch live Opper AI models, using fallback cache');
-    opperModels = OPPER_FALLBACK;
+    opperModels = (typeof OPPER_FALLBACK !== 'undefined') ? OPPER_FALLBACK : [];
   }
 
   // 6. Fetch EURouter
@@ -187,7 +187,7 @@ async function fetchModels() {
     console.log('Fetched live EURouter models:', eurouterModels.length);
   } catch (err) {
     console.warn('Could not fetch live EURouter models, using fallback cache');
-    eurouterModels = EUROUTER_FALLBACK;
+    eurouterModels = (typeof EUROUTER_FALLBACK !== 'undefined') ? EUROUTER_FALLBACK : [];
   }
 
   // 7. Fetch Requesty AI
@@ -199,7 +199,7 @@ async function fetchModels() {
     console.log('Fetched live Requesty AI models:', requestyModels.length);
   } catch (err) {
     console.warn('Could not fetch live Requesty AI models, using fallback cache');
-    requestyModels = REQUESTY_FALLBACK;
+    requestyModels = (typeof REQUESTY_FALLBACK !== 'undefined') ? REQUESTY_FALLBACK : [];
   }
 }
 
@@ -253,6 +253,14 @@ function getModelCreator(modelId, rawOwnedBy) {
 }
 
 function processAndUnifyModels() {
+  if (!Array.isArray(cortecsModels)) cortecsModels = [];
+  if (!Array.isArray(mammouthModels)) mammouthModels = [];
+  if (!Array.isArray(mistralModels)) mistralModels = [];
+  if (!Array.isArray(edenaiModels)) edenaiModels = [];
+  if (!Array.isArray(opperModels)) opperModels = [];
+  if (!Array.isArray(eurouterModels)) eurouterModels = [];
+  if (!Array.isArray(requestyModels)) requestyModels = [];
+
   const groups = []; // Array of { canonicalId, creator, context_size, tags, offers: { mammouth, cortecs, mistral, edenai, opper, eurouter, requesty } }
   
   function findGroup(id) {
