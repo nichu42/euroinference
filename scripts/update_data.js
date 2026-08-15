@@ -200,7 +200,10 @@ async function run() {
     ? JSON.stringify(exchangeRateData[0] || exchangeRateData)
     : extractFallbackVariable(currentContent, 'EXCHANGE_RATE');
 
-  const content = `// Auto-generated data file - Do not edit manually. Generated at ${new Date().toISOString()}
+  const timestamp = new Date().toISOString();
+  const content = `// Auto-generated data file - Do not edit manually. Generated at ${timestamp}
+
+const LAST_UPDATED = ${JSON.stringify(timestamp)};
 
 const MAMMOUTH_FALLBACK = ${outMammouth};
 
@@ -229,31 +232,60 @@ const REQUESTY_FALLBACK = ${outRequesty};
 const FIELD_ALLOWLIST = {
   // id is always read; pricing/model_info are read for cost; context* for the size column; etc.
   all: ['id'],
-  cortecs: ['id', 'owned_by', 'context_size', 'supported_features', 'pricing'],
-  mammouth: ['id', 'model_info'],
-  mistral: ['id', 'pricing'],
-  edenai: ['id', 'owned_by', 'context_length', 'pricing'],
-  opper: ['id', 'provider_display_name', 'context_window', 'pricing'],
-  eurouter: ['id', 'author_info', 'context_length', 'pricing'],
-  requesty: ['id', 'input_price', 'output_price', 'context_window'],
-  // Pricing subfields app.js reads; strip cache/audio/image/search/DBu variants and the duplicated list_pricing.
+  cortecs: [
+    'id', 'owned_by', 'context_size', 'max_output_tokens', 'description',
+    'supported_features', 'tags', 'input_modalities', 'output_modalities',
+    'providers', 'pricing'
+  ],
+  mammouth: ['id', 'owned_by', 'model_info'],
+  mistral: ['id', 'name', 'owned_by', 'pricing', 'context_size', 'description'],
+  edenai: ['id', 'owned_by', 'model_name', 'context_length', 'description', 'capabilities', 'pricing', 'regions'],
+  opper: ['id', 'name', 'provider_display_name', 'context_window', 'max_output_tokens', 'description', 'capabilities', 'pricing', 'region'],
+  eurouter: ['id', 'name', 'author_info', 'author', 'context_length', 'description', 'reasoning', 'tags', 'providers', 'pricing'],
+  requesty: [
+    'id', 'description', 'owned_by', 'input_price', 'output_price', 'cached_price', 'caching_price',
+    'context_window', 'max_output_tokens', 'supports_caching', 'supports_vision', 'supports_reasoning',
+    'supports_tool_calling', 'supports_output_json_schema', 'supports_image_generation',
+    'data_retention_days', 'data_used_for_training', 'geolocation'
+  ],
+  // Pricing subfields app.js reads
   pricing: {
-    cortecs: ['input_token', 'output_token'],
+    cortecs: ['input_token', 'output_token', 'cache_read_cost', 'cache_write_cost', 'audio_cost', 'currency'],
     mistral: ['input_token', 'output_token'],
     edenai: ['input_cost_per_token', 'output_cost_per_token'],
     opper: ['input', 'output'],
     eurouter: ['prompt', 'completion', 'currency'],
-    requesty: null, // requesty pricing sits at the top level (input_price/output_price), not in .pricing
+    requesty: null,
   },
-  // Nested model_info fields Mammouth needs (token caps + per-token costs).
+  // Nested model_info fields Mammouth needs
   model_info: {
     mammouth: ['max_input_tokens', 'max_output_tokens', 'input_cost_per_token', 'output_cost_per_token'],
   },
-  // Cortecs feature flags used for tag inference.
+  // Cortecs / EURouter / Eden / Opper nested capability structures
   supported_features: {
-    cortecs: true, // keep the whole array
+    cortecs: true,
   },
-  // EURouter's display_name under author_info is the only nested thing we read.
+  tags: {
+    cortecs: true,
+    eurouter: true,
+  },
+  input_modalities: {
+    cortecs: true,
+  },
+  output_modalities: {
+    cortecs: true,
+  },
+  providers: {
+    cortecs: true,
+    eurouter: true,
+  },
+  capabilities: {
+    edenai: true,
+    opper: true,
+  },
+  regions: {
+    edenai: true,
+  },
   author_info: {
     eurouter: ['display_name'],
   },

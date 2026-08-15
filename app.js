@@ -34,6 +34,7 @@ let currentSortDirection = 'asc'; // 'asc' or 'desc'
 
 // Explicit overrides mapping (Cortecs ID -> Mammouth ID)
 const STRICT_ALIASES = {
+  'r1': 'deepseek-r1',
   'claude-opus4-8': 'claude-opus-4-8',
   'claude-opus4-7': 'claude-opus-4-7',
   'claude-opus4-6': 'claude-opus-4-6',
@@ -62,29 +63,79 @@ const CREATOR_NAMES = {
   'mistral ai': 'Mistral AI',
   'mistral': 'Mistral AI',
   'alibaba cloud': 'Alibaba Cloud',
+  'alibaba': 'Alibaba Cloud',
   'z.ai': 'Zhipu AI',
+  'zhipu': 'Zhipu AI',
+  'zhipu ai': 'Zhipu AI',
   'moonshot ai': 'Moonshot AI',
+  'moonshot': 'Moonshot AI',
+  'moonshotai': 'Moonshot AI',
   'nvidia': 'NVIDIA',
   'amazon': 'Amazon',
+  'aws': 'Amazon',
   'meta': 'Meta',
   'nousresearch': 'Nous Research',
+  'nous research': 'Nous Research',
   'xiaomimimo': 'Xiaomi',
+  'xiaomi': 'Xiaomi',
   'tencent hy': 'Tencent',
+  'tencent': 'Tencent',
   'swiss ai initiative': 'Swiss AI',
+  'swiss ai': 'Swiss AI',
   'h company': 'H Company',
-  'openbmb': 'OpenBMB'
+  'openbmb': 'OpenBMB',
+  'ibm': 'IBM',
+  'cohere': 'Cohere',
+  'ai21': 'AI21 Labs',
+  'ai21 labs': 'AI21 Labs',
+  'writer': 'Writer',
+  'perplexity': 'Perplexity',
+  'xai': 'xAI',
+  'x.ai': 'xAI',
+  'databricks': 'Databricks',
+  'microsoft': 'Microsoft',
+  'snowflake': 'Snowflake',
+  'deepinfra': 'Deepinfra',
+  'cloudflare': 'Cloudflare'
 };
 
 // --- DATA FETCHING & INITIALIZATION ---
 
 async function init() {
   loadExchangeRate();
+  updateLastUpdatedDisplay();
   await fetchModels();
 
   processAndUnifyModels();
   setupUIEventListeners();
   renderCreatorsFilter();
   applyFiltersAndRender();
+}
+
+function formatLastUpdated(isoString) {
+  if (!isoString) return 'recently';
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    const year = d.getUTCFullYear();
+    const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    const hours = String(d.getUTCHours()).padStart(2, '0');
+    const mins = String(d.getUTCMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${mins} UTC`;
+  } catch (e) {
+    return isoString;
+  }
+}
+
+function updateLastUpdatedDisplay() {
+  const el = document.getElementById('last-updated-display');
+  if (!el) return;
+  const raw = (typeof LAST_UPDATED !== 'undefined') ? LAST_UPDATED : (typeof exchangeRateDate !== 'undefined' ? exchangeRateDate : '');
+  el.textContent = formatLastUpdated(raw);
+  if (raw) {
+    el.title = `Data timestamp: ${raw}`;
+  }
 }
 
 function loadExchangeRate() {
@@ -139,21 +190,55 @@ function getCleanModelId(id) {
   if (!id) return '';
   let clean = id.toLowerCase();
   
+  // Strip trailing region suffix like @eu, @us, @global, @europe-west1, @us-east-1
+  clean = clean.replace(/@[a-z0-9_-]+$/i, '');
+  
   if (clean.includes('/')) {
     clean = clean.split('/').pop();
   }
   
   if (clean.includes(':')) {
-    clean = clean.split(':').pop();
+    clean = clean.split(':')[0];
   }
   
-  if (clean.includes('@')) {
-    clean = clean.split('@')[0];
-  }
-  
-  clean = clean.replace(/^(anthropic|openai|google|meta|cohere|mistral|amazon|ibm|alibaba|zhipu|moonshot|microsoft|snowflake|deepseek|ai21)\./i, '');
+  // Strip vendor dot prefixes
+  clean = clean.replace(/^(anthropic|openai|google|meta|cohere|mistral|amazon|ibm|alibaba|zhipu|moonshot|moonshotai|microsoft|snowflake|deepseek|ai21|writer|qwen|zai)\./i, '');
+  // Strip host hyphen prefixes
+  clean = clean.replace(/^(databricks|vertex|bedrock|azure|deepinfra|novita|together|cloudflare|anyscale|replicate|amazon|aws)-/i, '');
+  // Strip trailing region suffix like -eu, -us, -global
+  clean = clean.replace(/-(eu|us|global)$/i, '');
+  // Strip -v1, -v2
   clean = clean.replace(/-v\d+$/i, '');
+  // Strip date snapshots like -2026-04-23, -2025-12-11
+  clean = clean.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+  // Strip 8-digit date snapshots like -20251001, -20240307
+  clean = clean.replace(/-\d{8}$/, '');
+  // Strip 4-digit date suffixes on models with base version (e.g. gpt-4-0613, gpt-3.5-turbo-0125, mistral-large-2402)
+  clean = clean.replace(/(gpt-4|gpt-3\.5-turbo|mistral-large|mistral-small|pixtral-large)-(\d{4})$/, '$1');
   
+  // Normalize hyphenated decimal versions (gpt-5-5-pro -> gpt-5.5-pro, jamba-1-5 -> jamba-1.5, mistral-medium-3-5 -> mistral-medium-3.5)
+  // ONLY if not followed by b/t (e.g. 70b, 2.4t)
+  clean = clean.replace(/(^|[a-z]-)(\d+)-(\d+)(?![bBtT\d])/g, '$1$2.$3');
+
+  // Normalize Claude aliases uniformly to: claude-[version]-[tier][modifier]
+  clean = clean.replace(/^claude-(opus|sonnet|haiku|fable)-(\d+(?:\.\d+)?)(.*)$/, 'claude-$2-$1$3');
+  clean = clean.replace(/^claude-(\d+(?:\.\d+)?)-(opus|sonnet|haiku|fable)(.*)$/, 'claude-$1-$2$3');
+
+  // Normalize Mistral aliases
+  clean = clean.replace(/^open-mistral-nemo$/, 'mistral-nemo');
+  clean = clean.replace(/^mistral-medium-3\.5$/, 'mistral-3.5-medium');
+  clean = clean.replace(/^mistral-medium-3\.1$/, 'mistral-3.1-medium');
+  clean = clean.replace(/^mistral-large-3$/, 'mistral-3-large');
+  clean = clean.replace(/^codestral-latest$/, 'codestral');
+  clean = clean.replace(/^mistral-large-latest$/, 'mistral-large');
+  clean = clean.replace(/^mistral-small-latest$/, 'mistral-small');
+
+  // Normalize Qwen aliases (qwen-2.5 -> qwen2.5, qwen-3 -> qwen3)
+  clean = clean.replace(/^qwen-(\d+(?:\.\d+)?)/, 'qwen$1');
+
+  // Normalize GLM aliases (glm-5p2 -> glm-5.2)
+  clean = clean.replace(/^glm-(\d+)p(\d+)/, 'glm-$1.$2');
+
   return clean;
 }
 
@@ -168,82 +253,256 @@ function normalizeSlug(slug) {
 
 function getHumanFriendlyName(id) {
   if (!id) return '';
-  let name = getCleanModelId(id);
-  
+  let clean = getCleanModelId(id);
+  const lower = clean.toLowerCase().trim();
+
+  // 1. Exact Manual Mappings for specific models
   const manualMappings = {
     'gpt-4o': 'GPT-4o',
     'gpt-4o-mini': 'GPT-4o Mini',
     'gpt-4-turbo': 'GPT-4 Turbo',
     'gpt-3.5-turbo': 'GPT-3.5 Turbo',
+    'gpt-35-turbo': 'GPT-3.5 Turbo',
     'gpt-4': 'GPT-4',
     'gpt-5.1-chat': 'GPT-5.1 Chat',
     'gpt-5.1-codex-max': 'GPT-5.1 Codex Max',
-    'claude-3-5-sonnet': 'Claude 3.5 Sonnet',
-    'claude-3-opus': 'Claude 3 Opus',
-    'claude-3-sonnet': 'Claude 3 Sonnet',
-    'claude-3-haiku': 'Claude 3 Haiku',
-    'claude-3.5-haiku': 'Claude 3.5 Haiku',
-    'claude-opus-4': 'Claude 4 Opus',
-    'claude-sonnet-4': 'Claude 4 Sonnet',
-    'claude-haiku-4': 'Claude 4 Haiku',
-    'claude-opus-4-5': 'Claude 4.5 Opus',
-    'claude-opus-4-6': 'Claude 4.6 Opus',
-    'claude-opus-4-7': 'Claude 4.7 Opus',
-    'claude-opus-4-8': 'Claude 4.8 Opus',
-    'claude-sonnet-4-5': 'Claude 4.5 Sonnet',
-    'claude-sonnet-4-6': 'Claude 4.6 Sonnet',
-    'claude-4-6-sonnet': 'Claude 4.6 Sonnet',
-    'claude-4-5-sonnet': 'Claude 4.5 Sonnet',
-    'gemini-1.5-pro': 'Gemini 1.5 Pro',
-    'gemini-1.5-flash': 'Gemini 1.5 Flash',
-    'gemini-2.0-flash': 'Gemini 2.0 Flash',
-    'gemini-2.0-pro-exp': 'Gemini 2.0 Pro (Experimental)',
-    'gemini-3.1-pro-preview': 'Gemini 3.1 Pro (Preview)',
-    'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (Preview)',
-    'gemini-3.1-flash-image-preview': 'Gemini 3.1 Flash-Image (Preview)',
+    'o1': 'o1',
+    'o1-mini': 'o1-mini',
+    'o1-pro': 'o1-pro',
+    'o3': 'o3',
+    'o3-mini': 'o3-mini',
+    'o3-pro': 'o3-pro',
+    'o4-mini': 'o4-mini',
+    'o3-deep-research': 'o3 Deep Research',
+    'o4-mini-deep-research': 'o4-mini Deep Research',
     'deepseek-chat': 'DeepSeek V3 (Chat)',
     'deepseek-coder': 'DeepSeek Coder',
     'deepseek-reasoner': 'DeepSeek R1 (Reasoner)',
     'deepseek-r1': 'DeepSeek R1',
-    'deepseek-r1-0528': 'DeepSeek R1 (0528)',
-    'llama-3-8b-instruct': 'Llama 3 8B (Instruct)',
-    'llama-3-70b-instruct': 'Llama 3 70B (Instruct)',
-    'llama-3.1-8b-instruct': 'Llama 3.1 8B (Instruct)',
-    'llama-3.1-70b-instruct': 'Llama 3.1 70B (Instruct)',
-    'llama-3.1-405b-instruct': 'Llama 3.1 405B (Instruct)',
-    'llama-3.3-70b-instruct': 'Llama 3.3 70B (Instruct)',
+    'deepseek-v3': 'DeepSeek V3',
+    'deepseek-v3.2': 'DeepSeek V3.2',
+    'deepseek-v4-flash': 'DeepSeek V4 Flash',
+    'deepseek-v4-pro': 'DeepSeek V4 Pro',
+    'codestral': 'Codestral',
+    'ministral-3b': 'Ministral 3B',
+    'ministral-8b': 'Ministral 8B',
+    'mistral-nemo': 'Mistral Nemo',
     'mistral-large': 'Mistral Large',
     'mistral-medium': 'Mistral Medium',
     'mistral-small': 'Mistral Small',
-    'mistral-nemo': 'Mistral Nemo',
-    'codestral': 'Codestral',
-    'qwen3-vl-flash': 'Qwen 3 VL Flash',
-    'qwen3.6-27b': 'Qwen 3.6 27B',
-    'qwen-2.5-72b-instruct': 'Qwen 2.5 72B (Instruct)',
-    'glm-4-flash': 'GLM 4 Flash',
-    'glm-5-turbo': 'GLM 5 Turbo',
-    'grok-2-beta': 'Grok 2 Beta',
-    'grok-2': 'Grok 2',
     'sonar-small-chat': 'Sonar Small Chat',
-    'sonar-medium-chat': 'Sonar Medium Chat'
+    'sonar-medium-chat': 'Sonar Medium Chat',
+    'sonar-deep-research': 'Sonar Deep Research',
+    'sonar-pro': 'Sonar Pro',
+    'sonar-reasoning-pro': 'Sonar Reasoning Pro',
+    'sonar': 'Sonar'
   };
 
-  const lower = name.toLowerCase().trim();
   if (manualMappings[lower]) {
     return manualMappings[lower];
   }
 
+  // 2. Generic systematic family formatting:
+  
+  // A. Claude (e.g. Claude 5 Opus, Claude 4.5 Haiku, Claude 5 Opus Fast, Claude 3.5 Sonnet)
+  if (lower.startsWith('claude')) {
+    let sub = lower;
+    let modifier = '';
+    const modMatch = sub.match(/-(fast|latest|preview|thinking|deep-research)$/);
+    if (modMatch) {
+      modifier = modMatch[1].charAt(0).toUpperCase() + modMatch[1].slice(1);
+      sub = sub.replace(/-(fast|latest|preview|thinking|deep-research)$/, '');
+    }
+    
+    let family = '';
+    const famMatch = sub.match(/(opus|sonnet|haiku|fable)/);
+    if (famMatch) {
+      family = famMatch[1].charAt(0).toUpperCase() + famMatch[1].slice(1);
+      sub = sub.replace(/-(opus|sonnet|haiku|fable)|(opus|sonnet|haiku|fable)-?/, '');
+    }
+    
+    let version = sub.replace(/^claude-?/, '').replace(/[-_]/g, '.');
+    if (version) {
+      version = version.replace(/\.+$/, '');
+    }
+    
+    const parts = ['Claude'];
+    if (version) parts.push(version);
+    if (family) parts.push(family);
+    if (modifier) parts.push(modifier === 'Fast' ? 'Fast' : `(${modifier})`);
+    return parts.join(' ');
+  }
+
+  // B. Mistral / Mixtral / Ministral / Codestral / Pixtral / Voxtral / Devstral
+  if (/^(mistral|mixtral|ministral|codestral|pixtral|voxtral|devstral)/.test(lower)) {
+    let sub = lower;
+    let brandMatch = sub.match(/^(mistral|mixtral|ministral|codestral|pixtral|voxtral|devstral)/);
+    let brand = brandMatch[1].charAt(0).toUpperCase() + brandMatch[1].slice(1);
+    sub = sub.replace(/^(mistral|mixtral|ministral|codestral|pixtral|voxtral|devstral)-?/, '');
+    
+    let version = '';
+    const verMatch = sub.match(/^(\d+(?:\.\d+)?)(?![bBtT\d])[-_]?/);
+    if (verMatch) {
+      version = verMatch[1];
+      sub = sub.slice(verMatch[0].length);
+    }
+
+    const restWords = sub.split(/[-_]/).filter(Boolean).map(w => {
+      if (/^\d+[bB]$/i.test(w)) return w.toUpperCase();
+      if (/^\d+x\d+[bB]$/i.test(w)) return w.toUpperCase();
+      if (['instruct', 'it', 'lora', 'latest'].includes(w)) return `(${w.charAt(0).toUpperCase() + w.slice(1)})`;
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    });
+
+    const parts = [brand];
+    if (version) parts.push(version);
+    parts.push(...restWords);
+    return parts.join(' ').replace(/\s+\(/g, ' (');
+  }
+
+  // C. Gemini / Gemma
+  if (/^(gemini|gemma)/.test(lower)) {
+    let sub = lower;
+    let brand = sub.startsWith('gemini') ? 'Gemini' : 'Gemma';
+    sub = sub.replace(/^(gemini|gemma)-?/, '');
+
+    let version = '';
+    const verMatch = sub.match(/^(\d+(?:\.\d+)?)(?![bBtT\d])[-_]?/);
+    if (verMatch) {
+      version = verMatch[1];
+      sub = sub.slice(verMatch[0].length);
+    }
+
+    const restWords = sub.split(/[-_]/).filter(Boolean).map(w => {
+      if (/^\d+[bB]$/i.test(w)) return w.toUpperCase();
+      if (/^\d+[bB]-a\d+[bB]$/i.test(w)) return w.toUpperCase();
+      if (['preview', 'exp', 'experimental', 'it', 'instruct', 'lora'].includes(w)) {
+        return `(${w.charAt(0).toUpperCase() + w.slice(1)})`;
+      }
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    });
+
+    const parts = [brand];
+    if (version) parts.push(version);
+    parts.push(...restWords);
+    return parts.join(' ').replace(/\s+\(/g, ' (');
+  }
+
+  // D. Qwen / QwQ
+  if (/^(qwen|qwq)/.test(lower)) {
+    let sub = lower;
+    let brand = sub.startsWith('qwq') ? 'QwQ' : 'Qwen';
+    sub = sub.replace(/^(qwen|qwq)-?/, '');
+
+    let version = '';
+    const verMatch = sub.match(/^(\d+(?:\.\d+)?)(?![bBtT\d])[-_]?/);
+    if (verMatch) {
+      version = verMatch[1];
+      sub = sub.slice(verMatch[0].length);
+    }
+
+    const restWords = sub.split(/[-_]/).filter(Boolean).map(w => {
+      if (/^\d+[bB]$/i.test(w)) return w.toUpperCase();
+      if (/^\d+(\.\d+)?[tT]$/i.test(w)) return w.toUpperCase();
+      if (/^\d+(\.\d+)?[tT]-a\d+[bB]$/i.test(w)) return w.toUpperCase();
+      if (/^\d+[bB]-a\d+[bB]$/i.test(w)) return w.toUpperCase();
+      if (w === 'vl') return 'VL';
+      if (w === 'instruct') return '(Instruct)';
+      if (w === 'coder') return 'Coder';
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    });
+
+    const parts = [brand];
+    if (version) parts.push(version);
+    parts.push(...restWords);
+    return parts.join(' ').replace(/\s+\(/g, ' (');
+  }
+
+  // E. GLM
+  if (/^glm/.test(lower)) {
+    let sub = lower;
+    sub = sub.replace(/^glm-?/, '');
+    let version = '';
+    const verMatch = sub.match(/^(\d+(?:\.\d+)?)(?![bBtT\d])[-_]?/);
+    if (verMatch) {
+      version = verMatch[1];
+      sub = sub.slice(verMatch[0].length);
+    }
+
+    const restWords = sub.split(/[-_]/).filter(Boolean).map(w => {
+      if (w === 'v') return 'V';
+      if (w === 'turbo') return 'Turbo';
+      if (w === 'flash') return 'Flash';
+      if (w === 'air') return 'Air';
+      if (w === 'maas') return 'MaaS';
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    });
+
+    const parts = ['GLM'];
+    if (version) parts.push(version);
+    parts.push(...restWords);
+    return parts.join(' ');
+  }
+
+  // F. Llama
+  if (/^llama/.test(lower)) {
+    let sub = lower;
+    sub = sub.replace(/^llama-?/, '');
+    let version = '';
+    const verMatch = sub.match(/^(\d+(?:\.\d+)?)(?![bBtT\d])[-_]?/);
+    if (verMatch) {
+      version = verMatch[1];
+      sub = sub.slice(verMatch[0].length);
+    }
+
+    const restWords = sub.split(/[-_]/).filter(Boolean).map(w => {
+      if (/^\d+[bB]$/i.test(w)) return w.toUpperCase();
+      if (['instruct', 'it'].includes(w)) return '(Instruct)';
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    });
+
+    const parts = ['Llama'];
+    if (version) parts.push(version);
+    parts.push(...restWords);
+    return parts.join(' ').replace(/\s+\(/g, ' (');
+  }
+
+  // G. GPT
+  if (/^gpt/.test(lower)) {
+    let sub = lower;
+    sub = sub.replace(/^gpt-?/, '');
+    let version = '';
+    const verMatch = sub.match(/^(\d+(?:\.\d+)?)(?![bBtT\d])[-_]?/);
+    if (verMatch) {
+      version = verMatch[1];
+      sub = sub.slice(verMatch[0].length);
+    }
+
+    const restWords = sub.split(/[-_]/).filter(Boolean).map(w => {
+      if (/^\d+[bB]$/i.test(w)) return w.toUpperCase();
+      if (['oss'].includes(w)) return 'OSS';
+      if (['api'].includes(w)) return 'API';
+      if (['preview', 'exp'].includes(w)) return `(${w.charAt(0).toUpperCase() + w.slice(1)})`;
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    });
+
+    const parts = ['GPT'];
+    if (version) parts.push(version);
+    parts.push(...restWords);
+    return parts.join(' ').replace(/\s+\(/g, ' (');
+  }
+
+  // Fallback Capitalizer for all other models
+  let name = clean;
   name = name.replace(/-(eu|us|global)$/i, '');
-  name = name.replace(/(\d+)-(\d+)/g, '$1.$2');
   
   return name
     .split(/[-_]/)
     .map(word => {
       if (!word) return '';
-      if (/^\d+[bB]$/.test(word)) {
-        return word.toUpperCase();
-      }
-      if (['gpt', 'llm', 'moe', 'ecb', 'api', 'vl'].includes(word.toLowerCase())) {
+      if (/^\d+[bB]$/i.test(word)) return word.toUpperCase();
+      if (/^\d+(\.\d+)?[tT]$/i.test(word)) return word.toUpperCase();
+      if (['gpt', 'llm', 'moe', 'ecb', 'api', 'vl', 'glm', 'oss', 'ibm', 'ai', 'r1', 'v3', 'v4'].includes(word.toLowerCase())) {
         return word.toUpperCase();
       }
       return word.charAt(0).toUpperCase() + word.slice(1);
@@ -265,29 +524,267 @@ function getCleanCreatorName(ownedBy) {
 }
 
 function getModelCreator(modelId, rawOwnedBy) {
-  const id = modelId.toLowerCase();
+  const cleanId = getCleanModelId(modelId);
+  const id = cleanId.toLowerCase();
+  const rawId = (modelId || '').toLowerCase();
   
-  if (id.startsWith('gpt-') || id.startsWith('text-embedding-3') || id.startsWith('gpt')) return 'OpenAI';
-  if (id.startsWith('claude-') || id.startsWith('voxtral')) return 'Anthropic';
-  if (id.startsWith('gemini-') || id.startsWith('gemma-')) return 'Google';
-  if (id.startsWith('deepseek-')) return 'DeepSeek';
-  if (id.startsWith('mistral-') || id.startsWith('ministral-') || id.startsWith('pixtral-') || id.startsWith('codestral-') || id.startsWith('devstral-')) return 'Mistral AI';
-  if (id.startsWith('qwen-') || id.startsWith('qwen')) return 'Alibaba Cloud';
-  if (id.startsWith('glm-')) return 'Zhipu AI';
-  if (id.startsWith('kimi-')) return 'Moonshot AI';
-  if (id.startsWith('llama-')) return 'Meta';
-  if (id.startsWith('minimax-')) return 'MiniMax AI';
-  if (id.startsWith('grok-')) return 'xAI';
-  if (id.startsWith('sonar-')) return 'Perplexity';
-  if (id.startsWith('nova-') || id.startsWith('voxtral-')) return 'Amazon';
+  if (id.startsWith('gpt-') || id.startsWith('text-embedding-') || id.startsWith('gpt') || id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4') || rawId.includes('openai')) return 'OpenAI';
+  if (id.startsWith('claude-') || id.includes('claude') || rawId.includes('anthropic')) return 'Anthropic';
+  if (id.startsWith('gemini-') || id.startsWith('gemma-') || id.startsWith('gemma') || rawId.includes('google/')) return 'Google';
+  if (id.startsWith('deepseek-') || id.startsWith('deepseek') || id === 'r1' || rawId.includes('deepseek')) return 'DeepSeek';
+  if (id.startsWith('mistral-') || id.startsWith('ministral-') || id.startsWith('pixtral-') || id.startsWith('codestral-') || id.startsWith('devstral-') || id.startsWith('voxtral') || id.startsWith('mixtral-') || rawId.includes('mistral')) return 'Mistral AI';
+  if (id.startsWith('qwen-') || id.startsWith('qwen') || id.startsWith('qwq') || rawId.includes('alibaba') || rawId.includes('qwen')) return 'Alibaba Cloud';
+  if (id.startsWith('glm-') || id.startsWith('glm') || rawId.includes('zhipu') || rawId.includes('zai-org')) return 'Zhipu AI';
+  if (id.startsWith('kimi-') || id.startsWith('kimi') || rawId.includes('moonshot')) return 'Moonshot AI';
+  if (id.startsWith('llama-') || id.startsWith('llama') || rawId.includes('meta-llama') || rawId.includes('meta/')) return 'Meta';
+  if (id.startsWith('minimax-') || id.startsWith('minimax')) return 'MiniMax AI';
+  if (id.startsWith('grok-') || id.startsWith('grok') || rawId.includes('xai')) return 'xAI';
+  if (id.startsWith('sonar-') || id.startsWith('sonar') || rawId.includes('perplexity')) return 'Perplexity';
+  if (id.startsWith('nova-') || id.startsWith('amazon-nova')) return 'Amazon';
   if (id.startsWith('apertus-')) return 'Swiss AI';
-  if (id.startsWith('hy3')) return 'Tencent';
-  if (id.startsWith('mimo-')) return 'Xiaomi';
-  if (id.startsWith('cosmos') || id.startsWith('nvidia-') || id.startsWith('nemotron-')) return 'NVIDIA';
-  if (id.startsWith('hermes-')) return 'Nous Research';
+  if (id.startsWith('hy3') || rawId.includes('tencent')) return 'Tencent';
+  if (id.startsWith('mimo-') || rawId.includes('xiaomi')) return 'Xiaomi';
+  if (id.startsWith('cosmos') || id.startsWith('nvidia-') || id.startsWith('nemotron-') || rawId.includes('nvidia')) return 'NVIDIA';
+  if (id.startsWith('hermes-') || rawId.includes('nousresearch')) return 'Nous Research';
   if (id.startsWith('holo')) return 'H Company';
+  if (id.startsWith('granite-') || rawId.includes('ibm')) return 'IBM';
+  if (id.startsWith('command-') || id.startsWith('cohere-') || rawId.includes('cohere')) return 'Cohere';
+  if (id.startsWith('jamba-') || rawId.includes('ai21')) return 'AI21 Labs';
+  if (id.startsWith('palmyra-') || rawId.includes('writer')) return 'Writer';
+  if (id.startsWith('minicpm-') || rawId.includes('openbmb')) return 'OpenBMB';
   
   return getCleanCreatorName(rawOwnedBy);
+}
+
+const STANDARD_CAPABILITIES = ['Reasoning', 'Tools', 'Vision', 'Code', 'Audio', 'Structured Output', 'Prompt Caching'];
+
+const PROVIDER_DISPLAY_NAMES = {
+  mammouth: 'Mammouth AI',
+  cortecs: 'Cortecs',
+  mistral: 'Mistral AI',
+  edenai: 'Eden AI',
+  opper: 'Opper AI',
+  eurouter: 'EURouter',
+  requesty: 'Requesty AI'
+};
+
+function normalizeOffer(providerId, rawModel) {
+  if (!rawModel) return null;
+  const idLower = (rawModel.id || '').toLowerCase();
+  
+  // 1. Creator extraction
+  const rawOwner = rawModel.owned_by || rawModel.author || (rawModel.author_info && rawModel.author_info.display_name) || rawModel.provider_display_name;
+  let creator = getModelCreator(rawModel.id, rawOwner);
+  if (providerId === 'mistral') {
+    creator = 'Mistral AI';
+  }
+
+  // 2. Limits extraction
+  let contextSize = null;
+  let maxOutputTokens = null;
+
+  if (providerId === 'cortecs') {
+    contextSize = typeof rawModel.context_size === 'number' ? rawModel.context_size : null;
+    maxOutputTokens = typeof rawModel.max_output_tokens === 'number' ? rawModel.max_output_tokens : null;
+  } else if (providerId === 'mammouth') {
+    if (rawModel.model_info) {
+      contextSize = rawModel.model_info.max_input_tokens || rawModel.model_info.max_output_tokens || null;
+      maxOutputTokens = rawModel.model_info.max_output_tokens || null;
+    }
+  } else if (providerId === 'mistral') {
+    contextSize = typeof rawModel.context_size === 'number' ? rawModel.context_size : null;
+  } else if (providerId === 'edenai') {
+    contextSize = typeof rawModel.context_length === 'number' ? rawModel.context_length : null;
+  } else if (providerId === 'opper') {
+    contextSize = typeof rawModel.context_window === 'number' ? rawModel.context_window : null;
+    maxOutputTokens = typeof rawModel.max_output_tokens === 'number' ? rawModel.max_output_tokens : null;
+  } else if (providerId === 'eurouter') {
+    contextSize = typeof rawModel.context_length === 'number' ? rawModel.context_length : null;
+  } else if (providerId === 'requesty') {
+    contextSize = typeof rawModel.context_window === 'number' ? rawModel.context_window : null;
+    maxOutputTokens = typeof rawModel.max_output_tokens === 'number' ? rawModel.max_output_tokens : null;
+  }
+
+  // 3. Capabilities extraction
+  const capabilities = new Set();
+
+  // Explicit or inferred Reasoning
+  const hasReasoning = 
+    (providerId === 'cortecs' && ((Array.isArray(rawModel.supported_features) && rawModel.supported_features.includes('reasoning')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Reasoning')))) ||
+    (providerId === 'requesty' && rawModel.supports_reasoning === true) ||
+    (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('reasoning')) ||
+    (providerId === 'eurouter' && (rawModel.reasoning === true || (Array.isArray(rawModel.tags) && rawModel.tags.includes('reasoning')))) ||
+    (providerId === 'edenai' && rawModel.capabilities && (rawModel.capabilities.reasoning || rawModel.capabilities.thought)) ||
+    (/\b(reason|reasoner|reasoning|r1|thinking|cot)\b/i.test(idLower) || /qwen3.*thinking/i.test(idLower));
+  if (hasReasoning) capabilities.add('Reasoning');
+
+  // Explicit or inferred Tools / Function Calling
+  const hasTools = 
+    (providerId === 'cortecs' && ((Array.isArray(rawModel.supported_features) && rawModel.supported_features.includes('tools')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Tools')))) ||
+    (providerId === 'requesty' && rawModel.supports_tool_calling === true) ||
+    (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('tools')) ||
+    (providerId === 'eurouter' && Array.isArray(rawModel.tags) && (rawModel.tags.includes('tools') || rawModel.tags.includes('function_calling'))) ||
+    (providerId === 'edenai' && rawModel.capabilities && (rawModel.capabilities.tools || rawModel.capabilities.function_calling)) ||
+    (providerId === 'mammouth' && /^(gpt-|claude-|gemini-|mistral-|qwen|glm-|minimax-|deepseek-v)/i.test(idLower)) ||
+    (/\b(tools?|fc)\b/i.test(idLower));
+  if (hasTools) capabilities.add('Tools');
+
+  // Explicit or inferred Vision / Multimodal
+  const hasVision = 
+    (providerId === 'cortecs' && ((Array.isArray(rawModel.input_modalities) && rawModel.input_modalities.includes('image')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Image')))) ||
+    (providerId === 'requesty' && rawModel.supports_vision === true) ||
+    (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('vision')) ||
+    (providerId === 'eurouter' && Array.isArray(rawModel.tags) && (rawModel.tags.includes('vision') || rawModel.tags.includes('multimodal'))) ||
+    (providerId === 'edenai' && rawModel.capabilities && (rawModel.capabilities.vision || (Array.isArray(rawModel.capabilities.input_modalities) && rawModel.capabilities.input_modalities.includes('image')))) ||
+    (providerId === 'mammouth' && /^(gpt-4|gpt-5|claude-|gemini-|gemma-3|qwen.*vl|pixtral|glm-5v|llama-4|minimax-m3)/i.test(idLower)) ||
+    (/\b(vision|image|vl|omni|pixtral|glm-5v)\b/i.test(idLower));
+  if (hasVision) capabilities.add('Vision');
+
+  // Explicit or inferred Code
+  const hasCode = 
+    (providerId === 'cortecs' && Array.isArray(rawModel.tags) && rawModel.tags.includes('Code')) ||
+    (providerId === 'edenai' && rawModel.capabilities && rawModel.capabilities.code) ||
+    (/\b(code|coder|codex|devstral|codestral)\b/i.test(idLower));
+  if (hasCode) capabilities.add('Code');
+
+  // Explicit or inferred Audio
+  const hasAudio = 
+    (providerId === 'cortecs' && ((Array.isArray(rawModel.input_modalities) && rawModel.input_modalities.includes('audio')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Audio')))) ||
+    (providerId === 'edenai' && rawModel.capabilities && Array.isArray(rawModel.capabilities.input_modalities) && rawModel.capabilities.input_modalities.includes('audio')) ||
+    (/\b(audio|voice|speech|voxtral)\b/i.test(idLower));
+  if (hasAudio) capabilities.add('Audio');
+
+  // Explicit or inferred Structured Output / JSON Mode
+  const hasStructuredOutput = 
+    (providerId === 'cortecs' && Array.isArray(rawModel.supported_features) && rawModel.supported_features.includes('json_mode')) ||
+    (providerId === 'requesty' && (rawModel.supports_output_json_schema || rawModel.supports_output_json_object)) ||
+    (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('structured_output')) ||
+    (providerId === 'edenai' && rawModel.capabilities && rawModel.capabilities.structured_output) ||
+    (providerId === 'mammouth' && /^(gpt-|claude-|gemini-|mistral)/i.test(idLower));
+  if (hasStructuredOutput) capabilities.add('Structured Output');
+
+  // Prompt Caching
+  const hasCaching = 
+    (providerId === 'cortecs' && rawModel.pricing && (rawModel.pricing.cache_read_cost > 0 || rawModel.pricing.cache_write_cost > 0)) ||
+    (providerId === 'requesty' && (rawModel.supports_caching || (rawModel.cached_price > 0)));
+  if (hasCaching) capabilities.add('Prompt Caching');
+
+  // 4. Description extraction
+  const description = rawModel.description && typeof rawModel.description === 'string' && rawModel.description.trim() ? rawModel.description.trim() : null;
+
+  // 5. European Infrastructure & Privacy
+  const hosts = (Array.isArray(rawModel.providers) ? rawModel.providers : [])
+    .map(h => typeof h === 'string' ? h : (h?.name || h?.id || h?.provider || ''))
+    .filter(Boolean);
+  const regions = (Array.isArray(rawModel.regions) ? rawModel.regions : (rawModel.region ? [rawModel.region] : []))
+    .map(r => typeof r === 'string' ? r : (r?.name || r?.code || r?.region || ''))
+    .filter(Boolean);
+  const zeroRetention = rawModel.data_retention_days === 0;
+  const noTraining = rawModel.data_used_for_training === false;
+
+  return {
+    providerId,
+    providerName: PROVIDER_DISPLAY_NAMES[providerId] || providerId,
+    rawModelId: rawModel.id,
+    rawModel,
+    creator,
+    contextSize,
+    maxOutputTokens,
+    capabilities: [...capabilities],
+    description,
+    infrastructure: {
+      hosts,
+      regions,
+      zeroRetention,
+      noTraining,
+      geolocation: rawModel.geolocation || null
+    }
+  };
+}
+
+function extractVersionNumber(id) {
+  if (!id) return 0;
+  const m = id.match(/(?:^|[^\d])(\d+(?:\.\d+)?)(?![bBtT\d])/);
+  return m ? parseFloat(m[1]) : 0;
+}
+
+function resolveLatestAliases(groups) {
+  const latestGroups = groups.filter(g => g.canonicalId.endsWith('-latest'));
+
+  for (const latestGroup of latestGroups) {
+    const providerIds = Object.keys(latestGroup.normalizedOffers);
+
+    for (const providerId of providerIds) {
+      const latestNorm = latestGroup.normalizedOffers[providerId];
+      const latestRaw = latestGroup.offers[providerId];
+      const inCost = getOfferInputCost(providerId, latestRaw);
+      const outCost = getOfferOutputCost(providerId, latestRaw);
+      const context = latestNorm.contextSize;
+      const creator = latestGroup.creator;
+
+      // Extract family keywords to match appropriate sibling groups
+      const idStr = latestGroup.canonicalId.toLowerCase();
+      let famKeyword = '';
+      if (idStr.includes('opus')) famKeyword = 'opus';
+      else if (idStr.includes('sonnet')) famKeyword = 'sonnet';
+      else if (idStr.includes('haiku')) famKeyword = 'haiku';
+      else if (idStr.includes('fable')) famKeyword = 'fable';
+      else if (idStr.includes('flash')) famKeyword = 'flash';
+      else if (idStr.includes('pro')) famKeyword = 'pro';
+      else if (idStr.includes('mini')) famKeyword = 'mini';
+      else if (idStr.includes('grok-4')) famKeyword = 'grok-4';
+      else if (idStr.includes('grok-3')) famKeyword = 'grok-3';
+      else if (idStr.includes('devstral')) famKeyword = 'devstral';
+      else if (idStr.includes('magistral')) famKeyword = 'magistral';
+      else if (idStr.includes('mistral')) famKeyword = 'mistral';
+
+      // Find candidates from the same provider and same creator
+      const candidates = groups.filter(g => {
+        if (g === latestGroup) return false;
+        if (g.canonicalId.endsWith('-latest')) return false;
+        if (g.creator !== creator) return false;
+        if (!g.normalizedOffers[providerId]) return false;
+        if (famKeyword && !g.canonicalId.includes(famKeyword)) return false;
+
+        const targetRaw = g.offers[providerId];
+        const targetNorm = g.normalizedOffers[providerId];
+        const targetIn = getOfferInputCost(providerId, targetRaw);
+        const targetOut = getOfferOutputCost(providerId, targetRaw);
+
+        // Check costs (allowing minor regional routing variance up to 15%)
+        const diffIn = Math.abs(targetIn - inCost) / (Math.max(targetIn, inCost) || 1);
+        const diffOut = Math.abs(targetOut - outCost) / (Math.max(targetOut, outCost) || 1);
+        if (diffIn > 0.15 || diffOut > 0.15) return false;
+        // Check context if available
+        if (context > 0 && targetNorm.contextSize > 0 && targetNorm.contextSize !== context) return false;
+
+        return true;
+      });
+
+      if (candidates.length > 0) {
+        // Sort by highest version number descending
+        candidates.sort((a, b) => extractVersionNumber(b.canonicalId) - extractVersionNumber(a.canonicalId));
+        const bestTarget = candidates[0];
+
+        const targetNorm = bestTarget.normalizedOffers[providerId];
+        targetNorm.alternateSlugs = targetNorm.alternateSlugs || [];
+        targetNorm.alternateSlugs.push({
+          rawModelId: latestNorm.rawModelId,
+          label: 'latest'
+        });
+
+        delete latestGroup.offers[providerId];
+        delete latestGroup.normalizedOffers[providerId];
+      }
+    }
+  }
+
+  // Remove empty latest groups
+  for (let i = groups.length - 1; i >= 0; i--) {
+    if (Object.keys(groups[i].normalizedOffers).length === 0) {
+      groups.splice(i, 1);
+    }
+  }
 }
 
 function processAndUnifyModels() {
@@ -299,7 +796,7 @@ function processAndUnifyModels() {
   if (!Array.isArray(eurouterModels)) eurouterModels = [];
   if (!Array.isArray(requestyModels)) requestyModels = [];
 
-  const groups = []; // Array of { canonicalId, creator, context_size, tags, offers: { mammouth, cortecs, mistral, edenai, opper, eurouter, requesty } }
+  const groups = []; // Array of grouped canonical models
   
   function findGroup(id) {
     const slug = normalizeSlug(id);
@@ -317,74 +814,29 @@ function processAndUnifyModels() {
     });
   }
   
-  function addOffer(provider, rawModel) {
+  function addOffer(providerId, rawModel) {
+    const normalized = normalizeOffer(providerId, rawModel);
+    if (!normalized) return;
+
     let group = findGroup(rawModel.id);
-    const idLower = rawModel.id.toLowerCase();
     if (!group) {
       const cleanBaseId = getCleanModelId(rawModel.id);
       const canonicalId = STRICT_ALIASES[cleanBaseId] || cleanBaseId;
       
-      let creator = 'Other';
-      if (provider === 'cortecs') {
-        creator = getCleanCreatorName(rawModel.owned_by);
-      } else if (provider === 'mistral') {
-        creator = 'Mistral AI';
-      } else if (provider === 'edenai') {
-        creator = getCleanCreatorName(rawModel.owned_by);
-      } else if (provider === 'opper') {
-        creator = rawModel.provider_display_name || 'Other';
-      } else if (provider === 'eurouter') {
-        creator = (rawModel.author_info && rawModel.author_info.display_name) || getCleanCreatorName(rawModel.author);
-      } else {
-        creator = getModelCreator(rawModel.id, rawModel.owned_by);
-      }
-      
-      let context_size = null;
-      if (provider === 'cortecs') context_size = rawModel.context_size;
-      else if (provider === 'mammouth') context_size = rawModel.model_info.max_input_tokens || rawModel.model_info.max_output_tokens || null;
-      else if (provider === 'mistral') context_size = rawModel.context_size;
-      else if (provider === 'edenai') context_size = rawModel.context_length;
-      else if (provider === 'opper') context_size = rawModel.context_window;
-      else if (provider === 'eurouter') context_size = rawModel.context_length;
-      else if (provider === 'requesty') context_size = rawModel.context_window;
-      
-      const tags = [];
-      if (idLower.includes('vision') || idLower.includes('image')) tags.push('Image');
-      if (idLower.includes('code') || idLower.includes('codex') || idLower.includes('coder') || idLower.includes('devstral')) tags.push('Code');
-      if (idLower.includes('tool')) tags.push('Tools');
-      if (idLower.includes('research') || idLower.includes('reason') || idLower.includes('r1')) tags.push('Reasoning');
-      if (provider === 'cortecs' && rawModel.supported_features) {
-        if (rawModel.supported_features.includes('reasoning') && !tags.includes('Reasoning')) tags.push('Reasoning');
-        if (rawModel.supported_features.includes('tools') && !tags.includes('Tools')) tags.push('Tools');
-      }
-      
       group = {
         canonicalId,
-        creator,
-        context_size,
-        tags,
+        creator: normalized.creator,
         offers: {},
-        supportsReasoning: {}
+        normalizedOffers: {}
       };
       groups.push(group);
     }
     
-    group.offers[provider] = rawModel;
-    group.supportsReasoning[provider] = idLower.includes('research') || idLower.includes('reason') || idLower.includes('r1') ||
-      (provider === 'cortecs' && Array.isArray(rawModel.supported_features) && rawModel.supported_features.includes('reasoning'));
+    group.offers[providerId] = rawModel;
+    group.normalizedOffers[providerId] = normalized;
     
-    if (provider === 'cortecs') {
-      group.creator = getCleanCreatorName(rawModel.owned_by);
-    }
-    
-    if (!group.context_size) {
-      if (provider === 'cortecs') group.context_size = rawModel.context_size;
-      else if (provider === 'mammouth') group.context_size = rawModel.model_info.max_input_tokens || rawModel.model_info.max_output_tokens || null;
-      else if (provider === 'mistral') group.context_size = rawModel.context_size;
-      else if (provider === 'edenai') group.context_size = rawModel.context_length;
-      else if (provider === 'opper') group.context_size = rawModel.context_window;
-      else if (provider === 'eurouter') group.context_size = rawModel.context_length;
-      else if (provider === 'requesty') group.context_size = rawModel.context_window;
+    if (providerId === 'cortecs' || group.creator === 'Other' || (normalized.creator && normalized.creator !== 'Other')) {
+      group.creator = getModelCreator(group.canonicalId, normalized.creator);
     }
   }
   
@@ -395,17 +847,73 @@ function processAndUnifyModels() {
   opperModels.forEach(m => addOffer('opper', m));
   eurouterModels.forEach(m => addOffer('eurouter', m));
   requestyModels.forEach(m => addOffer('requesty', m));
+
+  // Smart resolution of generic floating latest models into the provider's matching concrete version
+  resolveLatestAliases(groups);
   
   unifiedModels = groups.map(g => {
+    const offerList = Object.values(g.normalizedOffers);
+    const totalOffers = offerList.length;
+
+    // Strict Consensus Capabilities: Supported by 100% of providers offering this model
+    const universalCapabilities = STANDARD_CAPABILITIES.filter(cap => 
+      offerList.every(off => off.capabilities.includes(cap))
+    );
+
+    // Partial Capabilities: Supported by at least one but NOT all providers
+    const partialCapabilities = STANDARD_CAPABILITIES
+      .filter(cap => offerList.some(off => off.capabilities.includes(cap)) && !offerList.every(off => off.capabilities.includes(cap)))
+      .map(cap => {
+        const supportedProviders = offerList.filter(off => off.capabilities.includes(cap)).map(off => off.providerName);
+        return {
+          capability: cap,
+          supportedCount: supportedProviders.length,
+          totalCount: totalOffers,
+          providers: supportedProviders
+        };
+      });
+
+    // Guaranteed Limits: Minimum floor across all offering providers
+    const validContexts = offerList.map(off => off.contextSize).filter(v => typeof v === 'number' && v > 0);
+    const contextMin = validContexts.length > 0 ? Math.min(...validContexts) : null;
+    const contextMax = validContexts.length > 0 ? Math.max(...validContexts) : null;
+
+    const validOutputs = offerList.map(off => off.maxOutputTokens).filter(v => typeof v === 'number' && v > 0);
+    const maxOutputMin = validOutputs.length > 0 ? Math.min(...validOutputs) : null;
+    const maxOutputMax = validOutputs.length > 0 ? Math.max(...validOutputs) : null;
+
+    // Pick richest description available
+    const descriptions = offerList.map(off => off.description).filter(Boolean);
+    descriptions.sort((a, b) => b.length - a.length);
+    const description = descriptions.length > 0 ? descriptions[0] : null;
+
+    // Per-provider reasoning lookup
+    const supportsReasoning = {};
+    const supportsCaching = {};
+    for (const off of offerList) {
+      supportsReasoning[off.providerId] = off.capabilities.includes('Reasoning');
+      supportsCaching[off.providerId] = off.capabilities.includes('Prompt Caching');
+    }
+
     return {
       id: g.canonicalId,
       name: g.canonicalId,
       creator: g.creator,
-      context_size: g.context_size,
-      tags: g.tags,
+      description,
+      context_size: contextMin,
+      contextMin,
+      contextMax,
+      maxOutput: maxOutputMin,
+      maxOutputMin,
+      maxOutputMax,
+      tags: universalCapabilities,
+      universalCapabilities,
+      partialCapabilities,
       offers: g.offers,
-      supportsReasoning: g.supportsReasoning,
-      matched: Object.keys(g.offers).length >= 2,
+      normalizedOffers: g.normalizedOffers,
+      supportsReasoning,
+      supportsCaching,
+      matched: totalOffers >= 2,
       cortecs: g.offers.cortecs || null,
       mammouth: g.offers.mammouth || null,
       mistral: g.offers.mistral || null,
@@ -523,6 +1031,22 @@ function getOfferOutputCost(providerId, offer, currency = selectedCurrency) {
   return null;
 }
 
+function getOfferCacheReadCost(providerId, offer, currency = selectedCurrency) {
+  if (!offer) return null;
+  if (providerId === 'cortecs') {
+    if (offer.pricing && typeof offer.pricing.cache_read_cost === 'number' && offer.pricing.cache_read_cost > 0) {
+      const pEur = offer.pricing.cache_read_cost;
+      return currency === 'EUR' ? pEur : pEur * exchangeRate;
+    }
+  } else if (providerId === 'requesty') {
+    if (typeof offer.cached_price === 'number' && offer.cached_price > 0) {
+      const pUsd = offer.cached_price * 1000000;
+      return currency === 'USD' ? pUsd : pUsd / exchangeRate;
+    }
+  }
+  return null;
+}
+
 function getInputCostPerMillion(modelObj, currency = selectedCurrency) {
   const activeOffers = [];
   for (const [providerId, offer] of Object.entries(modelObj.offers)) {
@@ -562,7 +1086,6 @@ function getOutputCostPerMillionWithReasoning(modelObj, currency = selectedCurre
 }
 
 // Total cost for a representative workload using the model's best offer.
-// Uses workloadInputTokens / workloadOutputTokens (per 1M tokens → /1,000,000).
 function getWorkloadCost(modelObj, currency = selectedCurrency) {
   const inCost = getInputCostPerMillion(modelObj, currency);
   const outCost = getOutputCostPerMillion(modelObj, currency);
@@ -600,19 +1123,9 @@ function getBestProviderDetails(modelObj, currency = selectedCurrency) {
     }
   }
   
-  const providerNames = {
-    mammouth: 'Mammouth AI',
-    cortecs: 'Cortecs',
-    mistral: 'Mistral AI',
-    edenai: 'Eden AI',
-    opper: 'Opper AI',
-    eurouter: 'EURouter',
-    requesty: 'Requesty AI'
-  };
-  
   return {
     providerId: best.providerId,
-    providerName: providerNames[best.providerId],
+    providerName: PROVIDER_DISPLAY_NAMES[best.providerId] || best.providerId,
     savingsTag
   };
 }
@@ -693,12 +1206,10 @@ function applyFiltersAndRender() {
         valB = pctB;
         break;
       case 'reasoning':
-        // Sort by total reasoning-aware cost (input + output), lowest first.
         valA = (() => { const i = getInputCostPerMillionWithReasoning(a); const o = getOutputCostPerMillionWithReasoning(a); return (i === null || o === null) ? Infinity : i + o; })();
         valB = (() => { const i = getInputCostPerMillionWithReasoning(b); const o = getOutputCostPerMillionWithReasoning(b); return (i === null || o === null) ? Infinity : i + o; })();
         break;
       case 'workload':
-        // Sort by workload cost (lowest first); push models with no pricing to the bottom.
         valA = getWorkloadCost(a) || Infinity;
         valB = getWorkloadCost(b) || Infinity;
         break;
@@ -746,14 +1257,9 @@ function renderTable(models) {
   const tbody = document.getElementById('models-table-body');
   if (!tbody) return;
 
-  // Distinguish "still loading / no data yet" from "filters returned nothing".
-  // Before unifiedModels is populated, models.length === 0 because init() hasn't run.
   if (models.length === 0) {
     const isInitialLoad = (typeof unifiedModels === 'undefined' || unifiedModels.length === 0);
-    if (isInitialLoad) {
-      // Keep the static <tr id="loading-row"> that lives in index.html; nothing to do.
-      return;
-    }
+    if (isInitialLoad) return;
     tbody.innerHTML = `
       <tr>
         <td colspan="9">
@@ -771,20 +1277,17 @@ function renderTable(models) {
     const inputCost = getInputCostPerMillion(m);
     const outputCost = getOutputCostPerMillion(m);
 
-    // Context format
-    const contextStr = m.context_size 
-      ? m.context_size.toLocaleString() 
-      : '<span style="color: var(--text-dark);">Unknown</span>';
-
-    const providerNames = {
-      mammouth: 'Mammouth AI',
-      cortecs: 'Cortecs',
-      mistral: 'Mistral AI',
-      edenai: 'Eden AI',
-      opper: 'Opper AI',
-      eurouter: 'EURouter',
-      requesty: 'Requesty AI'
-    };
+    // Guaranteed Context format (Strict Consensus floor)
+    let contextStr = '<span style="color: var(--text-dark);">Unknown</span>';
+    if (m.context_size) {
+      const offersCount = Object.keys(m.offers).length;
+      if (m.contextMin !== null && m.contextMax !== null && m.contextMin < m.contextMax) {
+        const tooltip = `Guaranteed Context Floor: ${m.contextMin.toLocaleString()} tokens\n(Range across ${offersCount} providers: ${m.contextMin.toLocaleString()} – ${m.contextMax.toLocaleString()} tokens)`;
+        contextStr = `<span title="${tooltip}" style="cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.35);">${m.context_size.toLocaleString()}</span>`;
+      } else {
+        contextStr = m.context_size.toLocaleString();
+      }
+    }
 
     // Provider badges list
     const availableProvidersHtml = Object.keys(m.offers).map(providerId => {
@@ -792,7 +1295,7 @@ function renderTable(models) {
       if (providerId === 'mammouth') badgeClass = 'badge-mammouth';
       else if (providerId === 'cortecs') badgeClass = 'badge-cortecs';
       
-      const providerName = providerNames[providerId] || providerId;
+      const providerName = PROVIDER_DISPLAY_NAMES[providerId] || providerId;
       return `<span class="badge ${badgeClass}" style="margin-right: 4px; font-size: 0.7rem;">${providerName}</span>`;
     }).join('');
 
@@ -800,13 +1303,12 @@ function renderTable(models) {
     const bestDetails = getBestProviderDetails(m);
     let bestProviderHtml = '<span style="color: var(--text-dark);">N/A</span>';
     if (bestDetails) {
-      // Build a tooltip with all providers and their markup vs. the cheapest.
       const allOfferCosts = Object.entries(m.offers)
         .map(([pid, offer]) => {
           const ic = getOfferInputCost(pid, offer);
           const oc = getOfferOutputCost(pid, offer);
           if (ic === null || oc === null) return null;
-          return { pid, name: providerNames[pid] || pid, total: ic + oc };
+          return { pid, name: PROVIDER_DISPLAY_NAMES[pid] || pid, total: ic + oc };
         })
         .filter(Boolean)
         .sort((a, b) => a.total - b.total);
@@ -848,7 +1350,7 @@ function renderTable(models) {
       reasoningHtml = `<span title="${reasonTooltip}" style="cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.3);">${reasonTotalFmt}</span>`;
     }
 
-    // Cost (your workload) column — uses the same "best offer" as the per-million columns.
+    // Cost (your workload) column
     const workloadCost = getWorkloadCost(m);
     const workloadFmt = workloadCost > 0 ? formatCurrency(workloadCost) : '—';
     const workloadTooltip = workloadCost > 0
@@ -856,12 +1358,17 @@ function renderTable(models) {
       : 'No pricing data available';
     const workloadHtml = `<span title="${workloadTooltip}" style="cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.3);">${workloadFmt}</span>`;
 
+    // Strict Universal Capabilities on Table Row
+    const tagsHtml = m.universalCapabilities && m.universalCapabilities.length > 0
+      ? m.universalCapabilities.slice(0, 4).map(t => `<span class="tag-badge" title="Universal capability: supported by 100% of providers offering this model">${t}</span>`).join('')
+      : '';
+
     return `
-      <tr class="clickable-row" onclick="openComparison('${m.id}')" title="Click to view details and comparison">
+      <tr class="clickable-row" onclick="openComparison('${m.id}')" title="Click to view details and provider comparison">
         <td>
           <div style="font-weight: 600; color: #ffffff;">${getHumanFriendlyName(m.id)}</div>
           <div class="tag-list" style="margin-top: 4px;">
-            ${m.tags.slice(0, 3).map(t => `<span class="tag-badge">${t}</span>`).join('')}
+            ${tagsHtml}
           </div>
         </td>
         <td>
@@ -883,8 +1390,6 @@ function renderTable(models) {
   }).join('');
 }
 
-// Obsolete highlights and comparison tools removed
-
 // --- MODAL POPUP SPLIT DETAILS ---
 
 window.openComparison = function(modelId) {
@@ -897,62 +1402,141 @@ window.openComparison = function(modelId) {
 function openModalWithSelection(modelObj) {
   const overlay = document.getElementById('detail-overlay');
   const modalContent = document.querySelector('.modal-content');
-  const sTitle = document.getElementById('savings-title');
-  const sDesc = document.getElementById('savings-desc');
-  const sInputVal = document.getElementById('savings-input-val');
-  const sOutputVal = document.getElementById('savings-output-val');
 
   if (!overlay || !modalContent) return;
 
   document.getElementById('modal-title-text').textContent = getHumanFriendlyName(modelObj.id);
 
   const offersList = [];
-  for (const [providerId, offer] of Object.entries(modelObj.offers)) {
-    const inCost = getOfferInputCost(providerId, offer, selectedCurrency);
-    const outCost = getOfferOutputCost(providerId, offer, selectedCurrency);
+  for (const [providerId, rawOffer] of Object.entries(modelObj.offers)) {
+    const normOffer = (modelObj.normalizedOffers && modelObj.normalizedOffers[providerId]) || normalizeOffer(providerId, rawOffer);
+    const inCost = getOfferInputCost(providerId, rawOffer, selectedCurrency);
+    const outCost = getOfferOutputCost(providerId, rawOffer, selectedCurrency);
+    const cacheCost = getOfferCacheReadCost(providerId, rawOffer, selectedCurrency);
     
-    let origIn = '', origOut = '';
-    if (providerId === 'mammouth') {
-      origIn = `$${(offer.model_info.input_cost_per_token * 1000000).toFixed(2)} USD`;
-      origOut = `$${(offer.model_info.output_cost_per_token * 1000000).toFixed(2)} USD`;
-    } else if (providerId === 'cortecs') {
-      origIn = `€${offer.pricing.input_token.toFixed(2)} EUR`;
-      origOut = `€${offer.pricing.output_token.toFixed(2)} EUR`;
-    } else if (providerId === 'mistral') {
-      origIn = `$${offer.pricing.input_token.toFixed(2)} USD`;
-      origOut = `$${offer.pricing.output_token.toFixed(2)} USD`;
-    } else if (providerId === 'edenai') {
-      origIn = `$${(offer.pricing.input_cost_per_token * 1000000).toFixed(2)} USD`;
-      origOut = `$${(offer.pricing.output_cost_per_token * 1000000).toFixed(2)} USD`;
-    } else if (providerId === 'opper') {
-      origIn = `$${offer.pricing.input[0].toFixed(2)} USD`;
-      origOut = `$${offer.pricing.output[0].toFixed(2)} USD`;
-    } else if (providerId === 'eurouter') {
-      const origCur = offer.pricing.currency || 'EUR';
-      const promptCost = parseFloat(offer.pricing.prompt) * 1000000;
-      const compCost = parseFloat(offer.pricing.completion) * 1000000;
+    let origIn = '', origOut = '', origCache = '';
+    if (providerId === 'mammouth' && rawOffer && rawOffer.model_info) {
+      if (typeof rawOffer.model_info.input_cost_per_token === 'number') {
+        origIn = `$${(rawOffer.model_info.input_cost_per_token * 1000000).toFixed(2)} USD`;
+      }
+      if (typeof rawOffer.model_info.output_cost_per_token === 'number') {
+        origOut = `$${(rawOffer.model_info.output_cost_per_token * 1000000).toFixed(2)} USD`;
+      }
+    } else if (providerId === 'cortecs' && rawOffer && rawOffer.pricing) {
+      if (typeof rawOffer.pricing.input_token === 'number') {
+        origIn = `€${rawOffer.pricing.input_token.toFixed(2)} EUR`;
+      }
+      if (typeof rawOffer.pricing.output_token === 'number') {
+        origOut = `€${rawOffer.pricing.output_token.toFixed(2)} EUR`;
+      }
+      if (typeof rawOffer.pricing.cache_read_cost === 'number') {
+        origCache = `€${rawOffer.pricing.cache_read_cost.toFixed(2)} EUR`;
+      }
+    } else if (providerId === 'mistral' && rawOffer && rawOffer.pricing) {
+      if (typeof rawOffer.pricing.input_token === 'number') {
+        origIn = `$${rawOffer.pricing.input_token.toFixed(2)} USD`;
+      }
+      if (typeof rawOffer.pricing.output_token === 'number') {
+        origOut = `$${rawOffer.pricing.output_token.toFixed(2)} USD`;
+      }
+    } else if (providerId === 'edenai' && rawOffer && rawOffer.pricing) {
+      if (typeof rawOffer.pricing.input_cost_per_token === 'number') {
+        origIn = `$${(rawOffer.pricing.input_cost_per_token * 1000000).toFixed(2)} USD`;
+      }
+      if (typeof rawOffer.pricing.output_cost_per_token === 'number') {
+        origOut = `$${(rawOffer.pricing.output_cost_per_token * 1000000).toFixed(2)} USD`;
+      }
+    } else if (providerId === 'opper' && rawOffer && rawOffer.pricing) {
+      const inVal = Array.isArray(rawOffer.pricing.input) ? rawOffer.pricing.input[0] : rawOffer.pricing.input;
+      const outVal = Array.isArray(rawOffer.pricing.output) ? rawOffer.pricing.output[0] : rawOffer.pricing.output;
+      if (typeof inVal === 'number') origIn = `$${inVal.toFixed(2)} USD`;
+      if (typeof outVal === 'number') origOut = `$${outVal.toFixed(2)} USD`;
+    } else if (providerId === 'eurouter' && rawOffer && rawOffer.pricing) {
+      const origCur = rawOffer.pricing.currency || 'EUR';
       const sym = origCur === 'USD' ? '$' : '€';
-      origIn = `${sym}${promptCost.toFixed(2)} ${origCur}`;
-      origOut = `${sym}${compCost.toFixed(2)} ${origCur}`;
-    } else if (providerId === 'requesty') {
-      origIn = `$${(offer.input_price * 1000000).toFixed(2)} USD`;
-      origOut = `$${(offer.output_price * 1000000).toFixed(2)} USD`;
+      if (rawOffer.pricing.prompt !== undefined && rawOffer.pricing.prompt !== null && !isNaN(parseFloat(rawOffer.pricing.prompt))) {
+        origIn = `${sym}${(parseFloat(rawOffer.pricing.prompt) * 1000000).toFixed(2)} ${origCur}`;
+      }
+      if (rawOffer.pricing.completion !== undefined && rawOffer.pricing.completion !== null && !isNaN(parseFloat(rawOffer.pricing.completion))) {
+        origOut = `${sym}${(parseFloat(rawOffer.pricing.completion) * 1000000).toFixed(2)} ${origCur}`;
+      }
+    } else if (providerId === 'requesty' && rawOffer) {
+      if (typeof rawOffer.input_price === 'number') {
+        origIn = `$${(rawOffer.input_price * 1000000).toFixed(2)} USD`;
+      }
+      if (typeof rawOffer.output_price === 'number') {
+        origOut = `$${(rawOffer.output_price * 1000000).toFixed(2)} USD`;
+      }
+      if (typeof rawOffer.cached_price === 'number') {
+        origCache = `$${(rawOffer.cached_price * 1000000).toFixed(2)} USD`;
+      }
     }
 
     offersList.push({
       providerId,
-      providerName: providerId === 'mammouth' ? 'Mammouth AI' : (providerId === 'cortecs' ? 'Cortecs' : (providerId === 'mistral' ? 'Mistral AI' : (providerId === 'edenai' ? 'Eden AI' : (providerId === 'opper' ? 'Opper AI' : (providerId === 'eurouter' ? 'EURouter' : 'Requesty AI'))))),
+      providerName: normOffer.providerName,
       inCost,
       outCost,
-      totalCost: inCost + outCost,
+      cacheCost,
+      totalCost: (inCost || 0) + (outCost || 0),
       origIn,
       origOut,
-      offer
+      origCache,
+      normOffer,
+      offer: rawOffer
     });
   }
 
   offersList.sort((a, b) => a.totalCost - b.totalCost);
 
+  // 1. Overview Section: Description + Consensus Guarantee Bar
+  const descHtml = modelObj.description 
+    ? `<div class="modal-model-desc">${modelObj.description}</div>`
+    : '';
+
+  const guaranteedContextStr = modelObj.contextMin 
+    ? (modelObj.contextMin < modelObj.contextMax ? `${modelObj.contextMin.toLocaleString()} tokens (up to ${modelObj.contextMax.toLocaleString()})` : `${modelObj.contextMin.toLocaleString()} tokens`)
+    : 'Unknown';
+
+  const guaranteedMaxOutStr = modelObj.maxOutputMin 
+    ? (modelObj.maxOutputMin < modelObj.maxOutputMax ? `${modelObj.maxOutputMin.toLocaleString()} tokens (up to ${modelObj.maxOutputMax.toLocaleString()})` : `${modelObj.maxOutputMin.toLocaleString()} tokens`)
+    : 'Standard';
+
+  const universalBadgesHtml = (modelObj.universalCapabilities && modelObj.universalCapabilities.length > 0)
+    ? modelObj.universalCapabilities.map(c => `<span class="cap-badge-universal" title="Guaranteed across ALL providers offering this model">✓ ${c}</span>`).join('')
+    : '<span style="font-size:0.75rem; color:var(--text-dark);">None guaranteed across all offers</span>';
+
+  const partialBadgesHtml = (modelObj.partialCapabilities && modelObj.partialCapabilities.length > 0)
+    ? modelObj.partialCapabilities.map(p => `<span class="cap-badge-partial" title="Supported by ${p.providers.join(', ')} only (${p.supportedCount}/${p.totalCount} providers)">⚠ ${p.capability} (${p.providers.join(', ')})</span>`).join('')
+    : '';
+
+  const overviewHtml = `
+    <div class="modal-overview-section">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <span style="font-size:0.75rem; color:var(--text-dark); text-transform:uppercase; font-weight:800; letter-spacing:0.04em;">Creator: <span style="color:#ffffff;">${modelObj.creator}</span></span>
+        <span style="font-size:0.72rem; color:var(--text-muted); background:rgba(255,255,255,0.04); padding:2px 8px; border-radius:4px; border:1px solid var(--border-color);">${offersList.length} Active European Offer${offersList.length > 1 ? 's' : ''}</span>
+      </div>
+      ${descHtml}
+      <div class="modal-consensus-bar">
+        <div class="consensus-metric-group">
+          <div class="consensus-metric">
+            <span class="metric-lbl">Guaranteed Context</span>
+            <span class="metric-val">${guaranteedContextStr}</span>
+          </div>
+          <div class="consensus-metric">
+            <span class="metric-lbl">Guaranteed Max Output</span>
+            <span class="metric-val">${guaranteedMaxOutStr}</span>
+          </div>
+        </div>
+        <div class="consensus-caps">
+          ${universalBadgesHtml}
+          ${partialBadgesHtml}
+        </div>
+      </div>
+    </div>
+  `;
+
+  // 2. Provider Comparison Cards Grid
   const cardsHtml = offersList.map((off, idx) => {
     const isCheapest = idx === 0 && offersList.length > 1;
     
@@ -970,60 +1554,147 @@ function openModalWithSelection(modelObj) {
     let markupBadge = '';
     if (idx > 0 && offersList.length > 1) {
       const cheapestCost = offersList[0].totalCost;
-      const markupPercent = Math.round((off.totalCost - cheapestCost) / cheapestCost * 100);
-      markupBadge = `<span style="font-size:0.75rem; font-weight:700; color:var(--cortecs-color); background: rgba(168, 85, 247, 0.1); padding: 2px 6px; border-radius: 4px;">+${markupPercent}% Cost</span>`;
+      const markupPercent = Math.round((off.totalCost - cheapestCost) / (cheapestCost || 1) * 100);
+      markupBadge = `<span style="font-size:0.72rem; font-weight:700; color:var(--cortecs-color); background: rgba(168, 85, 247, 0.1); padding: 2px 6px; border-radius: 4px;">+${markupPercent}% Cost</span>`;
     } else if (isCheapest) {
       markupBadge = `<span class="badge-both" style="font-size:0.7rem; padding: 2px 6px;">Best Value</span>`;
     }
-
-    let creatorName = modelObj.creator;
 
     const cardStyle = isCheapest 
       ? 'background: rgba(16, 185, 129, 0.03); border: 2px solid var(--savings-color); box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);' 
       : 'background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color);';
 
+    // Provider Capabilities Checklist
+    const capChecklistHtml = STANDARD_CAPABILITIES.map(cap => {
+      const supported = off.normOffer.capabilities.includes(cap);
+      return `
+        <span style="font-size:0.7rem; padding: 1px 5px; border-radius: 3px; ${supported ? 'color:#FFCC00; background:rgba(255,204,0,0.1); border:1px solid rgba(255,204,0,0.3); font-weight:600;' : 'color:var(--text-dark); background:rgba(255,255,255,0.02);'}">
+          ${supported ? '✓' : '—'} ${cap}
+        </span>
+      `;
+    }).join('');
+
+    // Prompt Caching Price Row
+    let cacheRowHtml = '';
+    if (off.cacheCost !== null) {
+      cacheRowHtml = `
+        <div class="modal-field" style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed rgba(255,255,255,0.06);">
+          <span class="lbl" style="font-size:0.65rem; color:#FFCC00; text-transform:uppercase; font-weight:700;">Prompt Cache Read (per 1M)</span>
+          <span class="val" style="font-size:0.95rem; font-weight:700; font-family:var(--font-mono); color:#FFCC00;">${formatCurrency(off.cacheCost)}</span>
+          <span class="desc" style="font-size:0.7rem; color:var(--text-muted);">${off.origCache}</span>
+        </div>
+      `;
+    }
+
+    // Infrastructure / EU Host Badges
+    const infra = off.normOffer.infrastructure || {};
+    const infraItems = [];
+    if (infra.hosts && Array.isArray(infra.hosts) && infra.hosts.length > 0) {
+      const formattedHosts = infra.hosts.map(h => {
+        if (!h) return '';
+        const str = typeof h === 'string' ? h : (h.name || h.id || h.provider || String(h));
+        return str ? (str.charAt(0).toUpperCase() + str.slice(1)) : '';
+      }).filter(Boolean);
+      if (formattedHosts.length > 0) {
+        infraItems.push(`EU Hosts: ${formattedHosts.join(', ')}`);
+      }
+    }
+    if (infra.regions && Array.isArray(infra.regions) && infra.regions.length > 0) {
+      const formattedRegions = infra.regions.map(r => {
+        if (!r) return '';
+        return typeof r === 'string' ? r : (r.name || r.code || r.region || String(r));
+      }).filter(Boolean);
+      if (formattedRegions.length > 0) {
+        infraItems.push(`Region: ${formattedRegions.join(', ')}`);
+      }
+    }
+    if (infra.zeroRetention) {
+      infraItems.push(`🛡 0-Day Retention`);
+    }
+    if (infra.noTraining) {
+      infraItems.push(`🔒 No Training`);
+    }
+
+    const infraHtml = infraItems.length > 0
+      ? `<div style="font-size:0.68rem; color:var(--text-muted); background:rgba(255,255,255,0.03); padding:4px 8px; border-radius:4px; border:1px solid rgba(255,255,255,0.05); margin-top:4px;">${infraItems.join(' • ')}</div>`
+      : '';
+
+    const offerContext = off.normOffer.contextSize ? `${off.normOffer.contextSize.toLocaleString()} context` : 'Standard context';
+    const offerMaxOut = off.normOffer.maxOutputTokens ? `${off.normOffer.maxOutputTokens.toLocaleString()} max out` : '';
+    const limitsStr = [offerContext, offerMaxOut].filter(Boolean).join(' • ');
+
     return `
-      <div class="modal-model-card" style="display:flex; flex-direction:column; padding: 1.25rem; border-radius: 12px; min-height: 200px; ${cardStyle}">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem;">
+      <div class="modal-model-card" style="${cardStyle}">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
           <span class="badge ${badgeClass}">${off.providerName}</span>
           ${markupBadge}
         </div>
-        <div style="font-family:var(--font-title); font-size:1.1rem; font-weight:800; color:#fff; margin-bottom: 0.15rem; word-break:break-all;">${getHumanFriendlyName(modelObj.id)}</div>
-        <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700; margin-bottom: 1.15rem;">Creator: ${creatorName}</div>
         
-        <div style="margin-bottom: 1.25rem;">
+        <div>
           <span style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 4px;">API Model Slug</span>
-          <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 6px 10px; border-radius: 6px; justify-content:space-between; gap: 8px;">
-            <code style="font-family:var(--font-mono); font-size:0.8rem; color:#e2e8f0; word-break:break-all;">${off.offer.id}</code>
-            <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${off.offer.id}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; transition: color 0.15s;" title="Copy to clipboard">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; justify-content:space-between; gap: 8px;">
+            <code style="font-family:var(--font-mono); font-size:0.75rem; color:#e2e8f0; word-break:break-all;">${off.normOffer.rawModelId}</code>
+            <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${off.normOffer.rawModelId}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; transition: color 0.15s;" title="Copy to clipboard">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             </button>
           </div>
+          ${off.normOffer.alternateSlugs && off.normOffer.alternateSlugs.length > 0 ? `
+            <div style="margin-top: 6px;">
+              <span style="font-size:0.6rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 3px;">Also Available As (Rolling Alias)</span>
+              ${off.normOffer.alternateSlugs.map(alt => `
+                <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.015); border: 1px dashed rgba(255,255,255,0.1); padding: 3px 6px; border-radius: 5px; justify-content:space-between; gap: 6px; margin-bottom: 4px;">
+                  <code style="font-family:var(--font-mono); font-size:0.7rem; color:#94a3b8; word-break:break-all;">${alt.rawModelId}</code>
+                  <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${alt.rawModelId}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center;" title="Copy alias slug">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
         </div>
-        
-        <div class="modal-field" style="margin-bottom: 1rem;">
-          <span class="lbl" style="font-size:0.7rem; color:var(--text-dark); text-transform:uppercase; font-weight:700;">Input Price (per 1M)</span>
-          <span class="val" style="font-size:1.15rem; font-weight:700; font-family:var(--font-mono); color:${isCheapest ? 'var(--savings-color)' : '#fff'}">${formatCurrency(off.inCost)}</span>
-          <span class="desc" style="font-size:0.75rem; color:var(--text-muted);">${off.origIn}</span>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <div class="modal-field">
+            <span class="lbl" style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700;">Input / 1M</span>
+            <span class="val" style="font-size:1rem; font-weight:700; font-family:var(--font-mono); color:${isCheapest ? 'var(--savings-color)' : '#fff'}">${formatCurrency(off.inCost)}</span>
+            <span class="desc" style="font-size:0.68rem; color:var(--text-muted);">${off.origIn}</span>
+          </div>
+          
+          <div class="modal-field">
+            <span class="lbl" style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700;">Output / 1M</span>
+            <span class="val" style="font-size:1rem; font-weight:700; font-family:var(--font-mono); color:${isCheapest ? 'var(--savings-color)' : '#fff'}">${formatCurrency(off.outCost)}</span>
+            <span class="desc" style="font-size:0.68rem; color:var(--text-muted);">${off.origOut}</span>
+          </div>
         </div>
-        
-        <div class="modal-field">
-          <span class="lbl" style="font-size:0.7rem; color:var(--text-dark); text-transform:uppercase; font-weight:700;">Output Price (per 1M)</span>
-          <span class="val" style="font-size:1.15rem; font-weight:700; font-family:var(--font-mono); color:${isCheapest ? 'var(--savings-color)' : '#fff'}">${formatCurrency(off.outCost)}</span>
-          <span class="desc" style="font-size:0.75rem; color:var(--text-muted);">${off.origOut}</span>
+
+        ${cacheRowHtml}
+
+        <div>
+          <span class="lbl" style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 2px;">Limits</span>
+          <span style="font-family:var(--font-mono); font-size:0.75rem; color:#ffffff;">${limitsStr}</span>
         </div>
+
+        <div>
+          <span class="lbl" style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 4px;">Provider Features</span>
+          <div style="display:flex; flex-wrap:wrap; gap:4px;">
+            ${capChecklistHtml}
+          </div>
+        </div>
+
+        ${infraHtml}
       </div>
     `;
   }).join('');
 
+  // 3. Savings Highlight Banner
   let savingsBannerHtml = '';
   if (offersList.length >= 2) {
     const best = offersList[0];
     const second = offersList[1];
-    const savingsPercent = Math.round((1 - best.totalCost / second.totalCost) * 100);
+    const savingsPercent = Math.round((1 - best.totalCost / (second.totalCost || 1)) * 100);
     
     savingsBannerHtml = `
-      <div class="price-highlight-row" style="margin-top: 1.5rem; width:100%; grid-column: 1 / -1; display:flex; justify-content:space-between; align-items:center; padding:1rem 1.5rem; border-radius:8px; background:var(--savings-bg); border:1px solid rgba(16, 185, 129, 0.2);">
+      <div class="price-highlight-row" style="margin-top: 0.5rem; width:100%; display:flex; justify-content:space-between; align-items:center; padding:1rem 1.5rem; border-radius:8px; background:var(--savings-bg); border:1px solid rgba(16, 185, 129, 0.2);">
         <div class="banner-text">
           <h4 id="savings-title" style="font-family:var(--font-title); font-weight:800; color:#fff; font-size:1.1rem; margin-bottom:2px;">${best.providerName} is the cheapest!</h4>
           <p id="savings-desc" style="font-size:0.85rem; color:var(--text-muted);">${savingsPercent > 0 ? `Save ${savingsPercent}% on total cost compared to the next provider.` : 'Both providers charge identical rates.'}</p>
@@ -1039,10 +1710,11 @@ function openModalWithSelection(modelObj) {
   }
 
   modalContent.innerHTML = `
-    <div style="display:contents;">
+    ${overviewHtml}
+    <div class="modal-cards-grid">
       ${cardsHtml}
-      ${savingsBannerHtml}
     </div>
+    ${savingsBannerHtml}
   `;
 
   overlay.classList.add('active');
