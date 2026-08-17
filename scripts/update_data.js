@@ -1,51 +1,99 @@
 const fs = require('fs');
 const path = require('path');
-
-// Keep MISTRAL_FALLBACK static
-const MISTRAL_FALLBACK = [
-  {
-    id: "mistral-large-latest",
-    name: "Mistral Large (latest)",
-    owned_by: "Mistral AI",
-    pricing: { input_token: 0.50, output_token: 1.50 },
-    context_size: 128000
-  },
-  {
-    id: "mistral-small-latest",
-    name: "Mistral Small (latest)",
-    owned_by: "Mistral AI",
-    pricing: { input_token: 0.15, output_token: 0.60 },
-    context_size: 32000
-  },
-  {
-    id: "codestral-latest",
-    name: "Codestral (latest)",
-    owned_by: "Mistral AI",
-    pricing: { input_token: 0.30, output_token: 0.90 },
-    context_size: 32000
-  },
-  {
-    id: "open-mistral-nemo",
-    name: "Mistral Nemo",
-    owned_by: "Mistral AI",
-    pricing: { input_token: 0.15, output_token: 0.15 },
-    context_size: 128000
-  },
-  {
-    id: "ministral-3b",
-    name: "Ministral 3B",
-    owned_by: "Mistral AI",
-    pricing: { input_token: 0.10, output_token: 0.10 },
-    context_size: 128000
-  },
-  {
-    id: "ministral-8b",
-    name: "Ministral 8B",
-    owned_by: "Mistral AI",
-    pricing: { input_token: 0.22, output_token: 0.22 },
-    context_size: 128000
+const envPath = path.join(__dirname, '../.env');
+if (fs.existsSync(envPath)) {
+  for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (match && !process.env[match[1]]) process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, '');
   }
-];
+}
+const configDir = path.join(__dirname, '../config');
+const mistralModelMap = JSON.parse(fs.readFileSync(path.join(configDir, 'mistral_models.json'), 'utf8'));
+const normalizationMap = JSON.parse(fs.readFileSync(path.join(configDir, 'normalization.json'), 'utf8'));
+const modelRegistry = JSON.parse(fs.readFileSync(path.join(configDir, 'models.json'), 'utf8'));
+
+const RETRY_LIMIT = 3;
+const RETRY_DELAY_MS = 1000;
+
+async function fetchWithRetry(url, options = {}, label = url) {
+  let lastError;
+  for (let attempt = 1; attempt <= RETRY_LIMIT; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeout);
+      if (response.ok) return response;
+      lastError = new Error(`${label} returned HTTP ${response.status}`);
+    } catch (err) {
+      lastError = err.name === 'AbortError' ? new Error(`${label} timed out`) : err;
+    }
+    if (attempt < RETRY_LIMIT) await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * attempt));
+  }
+  throw lastError;
+}
+
+function requireArray(value, provider, field = 'data') {
+  if (!Array.isArray(value)) throw new Error(`${provider} response field ${field} is not an array`);
+  return value;
+}
+
+function validateModelRecords(models, provider) {
+  requireArray(models, provider);
+  if (models.some(model => !model || typeof model !== 'object' || typeof model.id !== 'string' || !model.id.trim())) {
+    throw new Error(`${provider} response contains a model without a valid id`);
+  }
+  return models;
+}
+
+function validateGeneratedModels(models, provider) {
+  validateModelRecords(models, provider);
+  if (models.some(model => !model.pricing || !Number.isFinite(model.pricing.input_token) || !Number.isFinite(model.pricing.output_token))) {
+    throw new Error(`${provider} generated data contains a model without valid token pricing`);
+  }
+  return models;
+}
+
+function normalizeGeneratedModel(provider, model) {
+  const id = resolveRegistryModelId(provider, model.id);
+  const rawOwner = model.owned_by || model.author || model.provider_display_name;
+  const ownerKey = String(rawOwner || '').toLowerCase().trim();
+  const creator = provider === 'mistral'
+    ? (/@regional$/i.test(model.id) ? 'Mistral AI Regional' : 'Mistral AI')
+    : (normalizationMap.creator_aliases[ownerKey] || rawOwner || 'Other');
+  return {
+    ...model,
+    canonical_id: id,
+    creator,
+    display_name: modelRegistry.models[id]?.display_name || normalizationMap.display_aliases?.[id] || normalizationMap.display_names?.[id] || model.name || id
+  };
+}
+
+function resolveRegistryModelId(provider, rawId) {
+  const id = applyStrictAlias(rawId);
+  for (const [canonicalId, entry] of Object.entries(modelRegistry.models || {})) {
+    const slugs = entry.providers?.[provider]?.slugs || [];
+    if (slugs.includes(rawId) || slugs.includes(id)) return canonicalId;
+  }
+  return id;
+}
+
+function normalizeModelId(id) {
+  let clean = String(id || '').toLowerCase();
+  clean = clean.replace(/@[a-z0-9_-]+$/i, '').split('/').pop().split(':')[0];
+  clean = clean.replace(/-(eu|us|global)$/i, '');
+  clean = clean.replace(/-\d{4}-\d{2}-\d{2}$/, '').replace(/-\d{8}$/, '');
+  clean = clean.replace(/-v\d+$/, '');
+  return clean;
+}
+
+function applyStrictAlias(id) {
+  let clean = normalizeModelId(id);
+  for (const aliases of Object.values(normalizationMap.provider_aliases || {})) {
+    clean = aliases[clean] || clean;
+  }
+  return normalizationMap.strict_aliases[clean] || clean;
+}
 
 async function run() {
   console.log('Fetching live exchange rates and model data...');
@@ -57,54 +105,53 @@ async function run() {
   let opperData = null;
   let eurouterData = null;
   let requestyData = null;
+  let mistralData = null;
+  let mistralApiModels = null;
+  const updateStatus = {};
   
   // 1. Fetch exchange rate
   try {
-    const res = await fetch('https://api.frankfurter.dev/v2/rates?base=EUR&quotes=USD');
-    if (res.ok) {
-      exchangeRateData = await res.json();
-      console.log('Fetched Frankfurter rates:', exchangeRateData);
-    } else {
-      console.warn('Frankfurter response not ok:', res.status);
-    }
+    const res = await fetchWithRetry('https://api.frankfurter.dev/v2/rates?base=EUR&quotes=USD', {}, 'Frankfurter');
+    exchangeRateData = await res.json();
+    requireArray(exchangeRateData, 'Frankfurter');
+    updateStatus.exchangeRate = true;
+    console.log('Fetched Frankfurter rates:', exchangeRateData);
   } catch (err) {
+    updateStatus.exchangeRate = false;
     console.error('Failed to fetch exchange rates:', err.message);
   }
   
   // 2. Fetch Mammouth models
   try {
-    const res = await fetch('https://api.mammouth.ai/public/models');
-    if (res.ok) {
-      const json = await res.json();
-      mammouthData = json.data;
-      console.log(`Fetched ${mammouthData.length} Mammouth AI models.`);
-    } else {
-      console.warn('Mammouth response not ok:', res.status);
-    }
+    const res = await fetchWithRetry('https://api.mammouth.ai/public/models', {}, 'Mammouth AI');
+    const json = await res.json();
+    mammouthData = validateModelRecords(json.data, 'Mammouth AI');
+    updateStatus.mammouth = Array.isArray(mammouthData);
+    console.log(`Fetched ${mammouthData.length} Mammouth AI models.`);
   } catch (err) {
+    updateStatus.mammouth = false;
     console.error('Failed to fetch Mammouth models:', err.message);
   }
   
   // 3. Fetch Cortecs models
   try {
-    const res = await fetch('https://api.cortecs.ai/v1/models');
-    if (res.ok) {
-      const json = await res.json();
-      cortecsData = json.data;
-      console.log(`Fetched ${cortecsData.length} Cortecs models.`);
-    } else {
-      console.warn('Cortecs response not ok:', res.status);
-    }
+    const res = await fetchWithRetry('https://api.cortecs.ai/v1/models', {}, 'Cortecs');
+    const json = await res.json();
+    cortecsData = validateModelRecords(json.data, 'Cortecs');
+    updateStatus.cortecs = Array.isArray(cortecsData);
+    console.log(`Fetched ${cortecsData.length} Cortecs models.`);
   } catch (err) {
+    updateStatus.cortecs = false;
     console.error('Failed to fetch Cortecs models:', err.message);
   }
 
   // 4. Fetch Eden AI models
   try {
-    const res = await fetch('https://api.edenai.run/v3/models');
+    const res = await fetchWithRetry('https://api.edenai.run/v3/models', {}, 'Eden AI');
     if (res.ok) {
       const json = await res.json();
-      edenaiData = json.data;
+    edenaiData = validateModelRecords(json.data, 'Eden AI');
+      updateStatus.edenai = Array.isArray(edenaiData);
       console.log(`Fetched ${edenaiData.length} Eden AI models.`);
     } else {
       console.warn('Eden AI response not ok:', res.status);
@@ -115,10 +162,11 @@ async function run() {
 
   // 5. Fetch Opper AI models
   try {
-    const res = await fetch('https://api.opper.ai/v3/models');
+    const res = await fetchWithRetry('https://api.opper.ai/v3/models', {}, 'Opper AI');
     if (res.ok) {
       const json = await res.json();
-      opperData = json.models;
+    opperData = validateModelRecords(json.models, 'Opper AI');
+      updateStatus.opper = Array.isArray(opperData);
       console.log(`Fetched ${opperData.length} Opper AI models.`);
     } else {
       console.warn('Opper AI response not ok:', res.status);
@@ -129,10 +177,11 @@ async function run() {
 
   // 6. Fetch EURouter models
   try {
-    const res = await fetch('https://api.eurouter.ai/api/v1/models');
+    const res = await fetchWithRetry('https://api.eurouter.ai/api/v1/models', {}, 'EURouter');
     if (res.ok) {
       const json = await res.json();
-      eurouterData = json.data;
+    eurouterData = validateModelRecords(json.data, 'EURouter');
+      updateStatus.eurouter = Array.isArray(eurouterData);
       console.log(`Fetched ${eurouterData.length} EURouter models.`);
     } else {
       console.warn('EURouter response not ok:', res.status);
@@ -143,10 +192,11 @@ async function run() {
 
   // 7. Fetch Requesty AI models
   try {
-    const res = await fetch('https://router.requesty.ai/v1/models');
+    const res = await fetchWithRetry('https://router.requesty.ai/v1/models', {}, 'Requesty AI');
     if (res.ok) {
       const json = await res.json();
-      requestyData = json.data;
+    requestyData = validateModelRecords(json.data, 'Requesty AI');
+      updateStatus.requesty = Array.isArray(requestyData);
       console.log(`Fetched ${requestyData.length} Requesty AI models.`);
     } else {
       console.warn('Requesty AI response not ok:', res.status);
@@ -154,14 +204,33 @@ async function run() {
   } catch (err) {
     console.error('Failed to fetch Requesty AI models:', err.message);
   }
+
+  // 8. Fetch Mistral's API catalog first, then join it to public pricing.
+  try {
+    if (!process.env.MISTRAL_API_KEY) throw new Error('MISTRAL_API_KEY is not configured');
+    const modelsRes = await fetchWithRetry('https://api.mistral.ai/v1/models', {
+      headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` }
+    }, 'Mistral models');
+    const modelsJson = await modelsRes.json();
+    mistralApiModels = validateModelRecords(modelsJson.data, 'Mistral AI API');
+    console.log(`Fetched ${mistralApiModels.length} Mistral API models.`);
+    const pricingRes = await fetchWithRetry('https://docs.mistral.ai/inference/pricing', {}, 'Mistral USD pricing');
+    const pricingHtml = await pricingRes.text();
+    const pricingEurRes = await fetchWithRetry('https://docs.mistral.ai/inference/pricing?currency=EUR', {}, 'Mistral EUR pricing');
+    const pricingEurHtml = await pricingEurRes.text();
+    mistralData = validateGeneratedModels(parseMistralCatalog(pricingHtml, pricingEurHtml, mistralModelMap, mistralApiModels), 'Mistral AI');
+    const pricedIds = new Set(mistralData.map(model => model.id.replace(/@regional$/, '')));
+    const apiOnly = mistralApiModels.filter(model => !pricedIds.has(model.id));
+    console.log(`Mistral API catalog: ${mistralApiModels.length} models, ${mistralData.length / 2} priced model families, ${apiOnly.length} API-only/unpriced models.`);
+    console.log('Mistral API IDs:', mistralApiModels.map(model => model.id).join(', '));
+    updateStatus.mistral = true;
+    console.log(`Fetched ${mistralData.length} Mistral AI models.`);
+  } catch (err) {
+    console.warn('Failed to fetch Mistral AI models:', err.message);
+  }
   
   // Resolve data path
   const dataFilePath = path.join(__dirname, '../data.js');
-  let currentContent = '';
-  if (fs.existsSync(dataFilePath)) {
-    currentContent = fs.readFileSync(dataFilePath, 'utf8');
-  }
-
   // Trim each provider's data down to only the fields app.js actually reads.
   // This is the only place to update this allowlist when app.js's data access changes.
   if (mammouthData) mammouthData = mammouthData.map(m => pickFields('mammouth', m));
@@ -170,60 +239,147 @@ async function run() {
   if (opperData) opperData = opperData.map(m => pickFields('opper', m));
   if (eurouterData) eurouterData = eurouterData.map(m => pickFields('eurouter', m));
   if (requestyData) requestyData = requestyData.map(m => pickFields('requesty', m));
+  if (mistralData) mistralData = mistralData.map(m => pickFields('mistral', m));
+
+  const normalizeProviderData = (provider, data) => data ? data.map(model => normalizeGeneratedModel(provider, model)) : [];
+  mammouthData = normalizeProviderData('mammouth', mammouthData);
+  cortecsData = normalizeProviderData('cortecs', cortecsData);
+  mistralData = normalizeProviderData('mistral', mistralData);
+  edenaiData = normalizeProviderData('edenai', edenaiData);
+  opperData = normalizeProviderData('opper', opperData);
+  eurouterData = normalizeProviderData('eurouter', eurouterData);
+  requestyData = normalizeProviderData('requesty', requestyData);
 
   // Construct the new data.js file content
-  const outMammouth = mammouthData
-    ? JSON.stringify(mammouthData)
-    : extractFallbackVariable(currentContent, 'MAMMOUTH_FALLBACK');
-
-  const outCortecs = cortecsData
-    ? JSON.stringify(cortecsData)
-    : extractFallbackVariable(currentContent, 'CORTECS_FALLBACK');
-
-  const outEden = edenaiData
-    ? JSON.stringify(edenaiData)
-    : extractFallbackVariable(currentContent, 'EDENAI_FALLBACK');
-
-  const outOpper = opperData
-    ? JSON.stringify(opperData)
-    : extractFallbackVariable(currentContent, 'OPPER_FALLBACK');
-
-  const outEurouter = eurouterData
-    ? JSON.stringify(eurouterData)
-    : extractFallbackVariable(currentContent, 'EUROUTER_FALLBACK');
-
-  const outRequesty = requestyData
-    ? JSON.stringify(requestyData)
-    : extractFallbackVariable(currentContent, 'REQUESTY_FALLBACK');
-
-  const outRate = exchangeRateData
-    ? JSON.stringify(exchangeRateData[0] || exchangeRateData)
-    : extractFallbackVariable(currentContent, 'EXCHANGE_RATE');
+  const outMammouth = JSON.stringify(mammouthData || []);
+  const outCortecs = JSON.stringify(cortecsData || []);
+  const outEden = JSON.stringify(edenaiData || []);
+  const outOpper = JSON.stringify(opperData || []);
+  const outEurouter = JSON.stringify(eurouterData || []);
+  const outRequesty = JSON.stringify(requestyData || []);
+  const outRate = JSON.stringify(exchangeRateData ? (exchangeRateData[0] || exchangeRateData) : null);
 
   const timestamp = new Date().toISOString();
+  const outMistral = JSON.stringify(mistralData || []);
   const content = `// Auto-generated data file - Do not edit manually. Generated at ${timestamp}
 
 const LAST_UPDATED = ${JSON.stringify(timestamp)};
+const UPDATE_STATUS = ${JSON.stringify(updateStatus)};
 
-const MAMMOUTH_FALLBACK = ${outMammouth};
+const MAMMOUTH_DATA = ${outMammouth};
 
-const CORTECTS_FALLBACK = ${outCortecs};
+const CORTECS_DATA = ${outCortecs};
 
 const EXCHANGE_RATE = ${outRate};
 
-const MISTRAL_FALLBACK = ${JSON.stringify(MISTRAL_FALLBACK)};
+const MISTRAL_DATA = ${outMistral};
 
-const EDENAI_FALLBACK = ${outEden};
+const EDENAI_DATA = ${outEden};
 
-const OPPER_FALLBACK = ${outOpper};
+const OPPER_DATA = ${outOpper};
 
-const EUROUTER_FALLBACK = ${outEurouter};
+const EUROUTER_DATA = ${outEurouter};
 
-const REQUESTY_FALLBACK = ${outRequesty};
+const REQUESTY_DATA = ${outRequesty};
 `;
 
   fs.writeFileSync(dataFilePath, content, 'utf8');
   console.log('Successfully wrote data.js!');
+}
+
+function parseMistralCatalog(pricingHtml, pricingEurHtml, modelMap, apiModels = null) {
+  const prices = new Map();
+  const euroPrices = new Map();
+  parsePricingTable(pricingHtml, prices);
+  parsePricingTable(pricingEurHtml, euroPrices);
+
+  function parsePricingTable(html, target) {
+    const rowPattern = /<tr[^>]*>(.*?)<\/tr>/gis;
+    for (const rowMatch of html.matchAll(rowPattern)) {
+      const cells = [...rowMatch[1].matchAll(/<td[^>]*>(.*?)<\/td>/gis)]
+        .map(match => match[1].replace(/<[^>]+>/g, '').replace(/&[^;]+;/g, '').trim());
+      if (cells.length < 4) continue;
+      const name = cells[0].replace(/↗/g, '').trim().toLowerCase();
+      const input = Number(cells[1].replace(/[^\d.]/g, ''));
+      const output = Number(cells[3].replace(/[^\d.]/g, ''));
+      if (Number.isFinite(input) && Number.isFinite(output)) {
+        target.set(name, { input, output });
+      }
+    }
+  }
+
+  for (const [name, price] of prices) {
+    const euroPrice = euroPrices.get(name);
+    if (euroPrice) price.eur = euroPrice;
+  }
+
+  const slugAliases = modelMap.aliases || {};
+  const excludedLabels = new RegExp(`^(?:${(modelMap.excluded_prefixes || []).map(prefix => prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'i');
+
+  return [...prices.entries()].flatMap(([label, price]) => {
+      if (excludedLabels.test(label.trim())) return [];
+      const registryEntry = findRegistryPricingEntry('mistral', label);
+      const slug = registryEntry?.providers?.mistral?.slugs?.find(candidate => apiModels.some(model => model.id === candidate))
+        || findApiSlug(label, apiModels, slugAliases);
+      if (!slug) return [];
+      const base = {
+        id: slug,
+        name: registryEntry?.display_name || label,
+        owned_by: registryEntry?.creator || 'Mistral AI',
+        pricing: {
+          input_token: price.input,
+          output_token: price.output,
+          input_token_eur: price.eur && price.eur.input,
+          output_token_eur: price.eur && price.eur.output,
+          currency: 'USD'
+        }
+      };
+      return [base, {
+        ...base,
+        id: `${slug}@regional`,
+        name: `${label} (Regional)`,
+        owned_by: 'Mistral AI Regional',
+        pricing: {
+          input_token: price.input * 1.1,
+          output_token: price.output * 1.1,
+          input_token_eur: price.eur && price.eur.input * 1.1,
+          output_token_eur: price.eur && price.eur.output * 1.1,
+          currency: 'USD'
+        }
+      }];
+    });
+}
+
+function findRegistryPricingEntry(provider, label) {
+  const normalized = label.toLowerCase().trim();
+  return Object.values(modelRegistry.models || {}).find(entry =>
+    (entry.providers?.[provider]?.pricing_names || []).some(name => name.toLowerCase() === normalized)
+  );
+}
+
+function findApiSlug(label, apiModels, aliases) {
+  if (!Array.isArray(apiModels)) return null;
+  if (aliases[label]) {
+    const alias = aliases[label];
+    return apiModels.some(model => model.id === alias) ? alias : null;
+  }
+  const labelWords = label.replace(/[^a-z0-9]+/gi, '').toLowerCase();
+  const familyAliases = {
+    mistralmedium: 'mistral-medium-latest',
+    mistralsmall: 'mistral-small-latest',
+    mistrallarge: 'mistral-large-latest',
+    ministral14b: 'ministral-14b-latest',
+    ministral8b: 'ministral-8b-latest',
+    ministral3b: 'ministral-3b-latest'
+  };
+  const familyAlias = Object.entries(familyAliases).find(([name]) => labelWords.includes(name));
+  if (familyAlias && apiModels.some(model => model.id === familyAlias[1])) return familyAlias[1];
+  const normalizedLabel = label.replace(/[^a-z0-9]+/gi, '').toLowerCase();
+  const match = apiModels.find(model => {
+    const normalizedId = model.id.replace(/[^a-z0-9]+/gi, '').toLowerCase();
+    return normalizedId.includes(normalizedLabel) || normalizedLabel.includes(normalizedId);
+  });
+  return match ? match.id : null;
 }
 
 // Whitelist of fields each provider's model objects must keep.
@@ -238,7 +394,7 @@ const FIELD_ALLOWLIST = {
     'providers', 'pricing'
   ],
   mammouth: ['id', 'owned_by', 'model_info'],
-  mistral: ['id', 'name', 'owned_by', 'pricing', 'context_size', 'description'],
+  mistral: ['id', 'name', 'owned_by', 'pricing', 'context_size', 'description', 'canonical_id', 'creator', 'display_name'],
   edenai: ['id', 'owned_by', 'model_name', 'context_length', 'description', 'capabilities', 'pricing', 'regions'],
   opper: ['id', 'name', 'provider_display_name', 'context_window', 'max_output_tokens', 'description', 'capabilities', 'pricing', 'region'],
   eurouter: ['id', 'name', 'author_info', 'author', 'context_length', 'description', 'reasoning', 'tags', 'providers', 'pricing'],
@@ -249,9 +405,9 @@ const FIELD_ALLOWLIST = {
     'data_retention_days', 'data_used_for_training', 'geolocation'
   ],
   // Pricing subfields app.js reads
-  pricing: {
-    cortecs: ['input_token', 'output_token', 'cache_read_cost', 'cache_write_cost', 'audio_cost', 'currency'],
-    mistral: ['input_token', 'output_token'],
+    pricing: {
+      cortecs: ['input_token', 'output_token', 'cache_read_cost', 'cache_write_cost', 'audio_cost', 'currency'],
+      mistral: ['input_token', 'output_token', 'input_token_eur', 'output_token_eur', 'currency'],
     edenai: ['input_cost_per_token', 'output_cost_per_token'],
     opper: ['input', 'output'],
     eurouter: ['prompt', 'completion', 'currency'],
@@ -326,49 +482,6 @@ function pruneNested(provider, key, value) {
     }
   }
   return value;
-}
-
-function extractFallbackVariable(content, varName) {
-  if (!content) return '[]';
-  const startIdx = content.indexOf(`const ${varName} =`);
-  if (startIdx === -1) return '[]';
-
-  let bracketCount = 0;
-  let inString = false;
-  let stringChar = '';
-  let i = content.indexOf('=', startIdx) + 1;
-  while (i < content.length && content[i] !== '[' && content[i] !== '{') {
-    i++;
-  }
-
-  if (i >= content.length) return '[]';
-
-  const startChar = content[i];
-  const endChar = startChar === '[' ? ']' : '}';
-  let result = '';
-
-  while (i < content.length) {
-    const char = content[i];
-    result += char;
-
-    if ((char === '"' || char === "'") && content[i - 1] !== '\\') {
-      if (!inString) {
-        inString = true;
-        stringChar = char;
-      } else if (stringChar === char) {
-        inString = false;
-      }
-    }
-
-    if (!inString) {
-      if (char === startChar) bracketCount++;
-      if (char === endChar) bracketCount--;
-      if (bracketCount === 0) break;
-    }
-    i++;
-  }
-
-  return result;
 }
 
 run();

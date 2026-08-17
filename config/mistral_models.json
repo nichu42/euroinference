@@ -1,0 +1,41 @@
+{
+  "aliases": {
+    "mistral large 3": "mistral-large-latest",
+    "mistral large": "mistral-large-latest",
+    "mistral medium 3.5": "mistral-medium-latest",
+    "mistral small 4": "mistral-small-latest",
+    "mistral small": "mistral-small-latest",
+    "ministral 3 14b": "ministral-14b-latest",
+    "ministral 14b": "ministral-14b-latest",
+    "ministral 3 8b": "ministral-8b-latest",
+    "ministral 8b": "ministral-8b-latest",
+    "ministral 3 3b": "ministral-3b-latest",
+    "ministral 3b": "ministral-3b-latest",
+    "z.ai glm 5.2": "glm-5.2",
+    "glm 5.2": "glm-5.2",
+    "codestral": "codestral-latest",
+    "devstral small 2": "devstral-latest",
+    "devstral medium 2": "devstral-medium-latest",
+    "magistral small": "magistral-small-latest"
+  },
+  "api_aliases": {
+    "glm-5-2": "glm-5-2",
+    "zai-glm-5-2": "glm-5-2",
+    "mistral-medium-3-5": "mistral-medium-latest",
+    "mistral-medium-3.5": "mistral-medium-latest",
+    "mistral-small-4": "mistral-small-latest",
+    "mistral-large-3": "mistral-large-latest",
+    "ministral-3-14b": "ministral-14b-latest",
+    "ministral-3-8b": "ministral-8b-latest",
+    "ministral-3-3b": "ministral-3b-latest"
+  },
+  "excluded_prefixes": [
+    "ocr",
+    "voxtral",
+    "mistral moderation",
+    "codestral embed",
+    "mistral embed",
+    "leanstral",
+    "classifier"
+  ]
+}

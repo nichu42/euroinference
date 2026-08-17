@@ -13,6 +13,7 @@ let requestyModels = [];
 let exchangeRate = 1.1406; // Overwritten at init from data.js EXCHANGE_RATE constant
 let exchangeRateDate = '2026-07-15'; // Overwritten at init from data.js EXCHANGE_RATE constant
 let selectedCurrency = 'EUR'; // 'EUR' or 'USD'
+let selectedTheme = document.documentElement.dataset.theme || 'dark';
 
 // Filter state
 let searchQuery = '';
@@ -23,36 +24,20 @@ let selectedTag = 'all'; // 'all' or specific capability tag
 
 // Workload estimator inputs (used to compute the "Cost (your workload)" column).
 // Defaults: 10K input / 1K output tokens — near the OpenRouter 2025 medians with light headroom.
-// 0 = no minimum context filter (the table already skews long-context; 87% of models are 128K+).
-let minContextSize = 0;
+// Default to a practical context size for regular chat, coding, and agent work.
+let minContextSize = 32000;
 let workloadInputTokens = 10000;
 let workloadOutputTokens = 1000;
+const COST_SLIDER_STEPS = 1000;
+const COST_LOG_MIN = 0.0001;
+let costFilterRanges = {
+  input: { min: 0, max: Infinity, scaleMax: Infinity },
+  output: { min: 0, max: Infinity, scaleMax: Infinity }
+};
 
 // Sorting state
 let currentSortColumn = 'id';
 let currentSortDirection = 'asc'; // 'asc' or 'desc'
-
-// Explicit overrides mapping (Cortecs ID -> Mammouth ID)
-const STRICT_ALIASES = {
-  'r1': 'deepseek-r1',
-  'claude-opus4-8': 'claude-opus-4-8',
-  'claude-opus4-7': 'claude-opus-4-7',
-  'claude-opus4-6': 'claude-opus-4-6',
-  'claude-opus4-5': 'claude-opus-4-5',
-  'gemini-3.1-flash-lite': 'gemini-3.1-flash-lite-preview',
-  'mistral-small-3.2-24b-instruct-2506': 'mistral-small-3.2-24b-instruct',
-  'mistral-medium-3.5': 'mistral-medium-3-5',
-  'claude-4-6-sonnet': 'claude-sonnet-4-6',
-  'claude-4-5-sonnet': 'claude-sonnet-4-5',
-  'claude-4-opus': 'claude-opus-4',
-  'claude-4-sonnet': 'claude-sonnet-4',
-  'claude-4-haiku': 'claude-haiku-4',
-  'mistral-large-latest': 'mistral-large',
-  'mistral-small-latest': 'mistral-small',
-  'codestral-latest': 'codestral-2506',
-  'codestral': 'codestral-2506',
-  'mistral-small-24b': 'mistral-small'
-};
 
 // Map of raw creator strings to clean display names
 const CREATOR_NAMES = {
@@ -62,6 +47,7 @@ const CREATOR_NAMES = {
   'deepseek': 'DeepSeek',
   'mistral ai': 'Mistral AI',
   'mistral': 'Mistral AI',
+  'mistral ai regional': 'Mistral AI Regional',
   'alibaba cloud': 'Alibaba Cloud',
   'alibaba': 'Alibaba Cloud',
   'z.ai': 'Zhipu AI',
@@ -104,9 +90,11 @@ const CREATOR_NAMES = {
 async function init() {
   loadExchangeRate();
   updateLastUpdatedDisplay();
+  renderUpdateWarning();
   await fetchModels();
 
   processAndUnifyModels();
+  configureCostFilters();
   setupUIEventListeners();
   renderCreatorsFilter();
   applyFiltersAndRender();
@@ -169,14 +157,14 @@ function loadExchangeRate() {
 }
 
 async function fetchModels() {
-  console.log('Loading model data from local fallback cache...');
-  mammouthModels = (typeof MAMMOUTH_FALLBACK !== 'undefined') ? MAMMOUTH_FALLBACK : [];
-  cortecsModels = (typeof CORTECTS_FALLBACK !== 'undefined') ? CORTECTS_FALLBACK : [];
-  mistralModels = (typeof MISTRAL_FALLBACK !== 'undefined') ? MISTRAL_FALLBACK : [];
-  edenaiModels = (typeof EDENAI_FALLBACK !== 'undefined') ? EDENAI_FALLBACK : [];
-  opperModels = (typeof OPPER_FALLBACK !== 'undefined') ? OPPER_FALLBACK : [];
-  eurouterModels = (typeof EUROUTER_FALLBACK !== 'undefined') ? EUROUTER_FALLBACK : [];
-  requestyModels = (typeof REQUESTY_FALLBACK !== 'undefined') ? REQUESTY_FALLBACK : [];
+  console.log('Loading generated model data...');
+  mammouthModels = (typeof MAMMOUTH_DATA !== 'undefined') ? MAMMOUTH_DATA : [];
+  cortecsModels = (typeof CORTECS_DATA !== 'undefined') ? CORTECS_DATA : [];
+  mistralModels = (typeof MISTRAL_DATA !== 'undefined') ? MISTRAL_DATA : [];
+  edenaiModels = (typeof EDENAI_DATA !== 'undefined') ? EDENAI_DATA : [];
+  opperModels = (typeof OPPER_DATA !== 'undefined') ? OPPER_DATA : [];
+  eurouterModels = (typeof EUROUTER_DATA !== 'undefined') ? EUROUTER_DATA : [];
+  requestyModels = (typeof REQUESTY_DATA !== 'undefined') ? REQUESTY_DATA : [];
   
   console.log('Loaded models count:', 
     mammouthModels.length, cortecsModels.length, mistralModels.length,
@@ -240,6 +228,12 @@ function getCleanModelId(id) {
   clean = clean.replace(/^glm-(\d+)p(\d+)/, 'glm-$1.$2');
 
   return clean;
+}
+
+function getGeneratedCanonicalId(rawModel) {
+  return rawModel && typeof rawModel.canonical_id === 'string' && rawModel.canonical_id
+    ? rawModel.canonical_id
+    : getCleanModelId(rawModel && rawModel.id);
 }
 
 function normalizeSlug(slug) {
@@ -558,6 +552,16 @@ function getModelCreator(modelId, rawOwnedBy) {
 
 const STANDARD_CAPABILITIES = ['Reasoning', 'Tools', 'Vision', 'Code', 'Audio', 'Structured Output', 'Prompt Caching'];
 
+const CAPABILITY_DESCRIPTIONS = {
+  Reasoning: 'Extended thinking for multi-step analysis and complex problem solving.',
+  Tools: 'Can call external tools or functions during a request.',
+  Vision: 'Can understand and analyze images or other visual inputs.',
+  Code: 'Optimized for writing, reviewing, or completing code.',
+  Audio: 'Supports audio input or output, depending on the provider.',
+  'Structured Output': 'Can return responses in a required schema or structured format.',
+  'Prompt Caching': 'Can reuse prompt content to reduce latency and input cost.'
+};
+
 const PROVIDER_DISPLAY_NAMES = {
   mammouth: 'Mammouth AI',
   cortecs: 'Cortecs',
@@ -568,15 +572,38 @@ const PROVIDER_DISPLAY_NAMES = {
   requesty: 'Requesty AI'
 };
 
+const PROVIDER_BADGE_CLASS = 'badge-provider';
+
+function areCostsEqual(a, b) {
+  return Math.abs(a - b) <= Math.max(1e-9, Math.max(Math.abs(a), Math.abs(b)) * 1e-9);
+}
+
+function renderUpdateWarning() {
+  const el = document.getElementById('update-warning');
+  if (!el || typeof UPDATE_STATUS === 'undefined') return;
+  const names = {
+    mammouth: 'Mammouth AI', cortecs: 'Cortecs', mistral: 'Mistral AI',
+    edenai: 'Eden AI', opper: 'Opper AI', eurouter: 'EURouter', requesty: 'Requesty AI'
+  };
+  const failed = Object.entries(names)
+    .filter(([id]) => UPDATE_STATUS[id] === false)
+    .map(([, name]) => name);
+  if (UPDATE_STATUS.exchangeRate === false) failed.push('exchange rates');
+  if (failed.length === 0) return;
+  el.textContent = `Warning: the last update failed for: ${failed.join(', ')}.`;
+  el.hidden = false;
+}
+
 function normalizeOffer(providerId, rawModel) {
   if (!rawModel) return null;
+  const effectiveProviderId = providerId === 'mistral-regional' ? 'mistral' : providerId;
   const idLower = (rawModel.id || '').toLowerCase();
   
   // 1. Creator extraction
   const rawOwner = rawModel.owned_by || rawModel.author || (rawModel.author_info && rawModel.author_info.display_name) || rawModel.provider_display_name;
-  let creator = getModelCreator(rawModel.id, rawOwner);
-  if (providerId === 'mistral') {
-    creator = 'Mistral AI';
+  let creator = rawModel.creator || getModelCreator(rawModel.id, rawOwner);
+  if (effectiveProviderId === 'mistral') {
+    creator = /@regional$/i.test(rawModel.id || '') ? 'Mistral AI Regional' : 'Mistral AI';
   }
 
   // 2. Limits extraction
@@ -591,7 +618,7 @@ function normalizeOffer(providerId, rawModel) {
       contextSize = rawModel.model_info.max_input_tokens || rawModel.model_info.max_output_tokens || null;
       maxOutputTokens = rawModel.model_info.max_output_tokens || null;
     }
-  } else if (providerId === 'mistral') {
+  } else if (effectiveProviderId === 'mistral') {
     contextSize = typeof rawModel.context_size === 'number' ? rawModel.context_size : null;
   } else if (providerId === 'edenai') {
     contextSize = typeof rawModel.context_length === 'number' ? rawModel.context_length : null;
@@ -607,6 +634,13 @@ function normalizeOffer(providerId, rawModel) {
 
   // 3. Capabilities extraction
   const capabilities = new Set();
+  const capabilityStatus = {};
+  const capabilityObject = rawModel.capabilities && !Array.isArray(rawModel.capabilities) ? rawModel.capabilities : {};
+  const explicitlyFalse = (...values) => values.some(value => value === false);
+  const recordCapability = (capability, supported, unsupported) => {
+    capabilityStatus[capability] = supported ? 'supported' : (unsupported ? 'unsupported' : 'unknown');
+    if (supported) capabilities.add(capability);
+  };
 
   // Explicit or inferred Reasoning
   const hasReasoning = 
@@ -616,7 +650,12 @@ function normalizeOffer(providerId, rawModel) {
     (providerId === 'eurouter' && (rawModel.reasoning === true || (Array.isArray(rawModel.tags) && rawModel.tags.includes('reasoning')))) ||
     (providerId === 'edenai' && rawModel.capabilities && (rawModel.capabilities.reasoning || rawModel.capabilities.thought)) ||
     (/\b(reason|reasoner|reasoning|r1|thinking|cot)\b/i.test(idLower) || /qwen3.*thinking/i.test(idLower));
-  if (hasReasoning) capabilities.add('Reasoning');
+  recordCapability('Reasoning', hasReasoning, explicitlyFalse(
+    rawModel.supports_reasoning,
+    capabilityObject.supports_reasoning,
+    capabilityObject.reasoning,
+    capabilityObject.thought
+  ));
 
   // Explicit or inferred Tools / Function Calling
   const hasTools = 
@@ -627,7 +666,11 @@ function normalizeOffer(providerId, rawModel) {
     (providerId === 'edenai' && rawModel.capabilities && (rawModel.capabilities.tools || rawModel.capabilities.function_calling)) ||
     (providerId === 'mammouth' && /^(gpt-|claude-|gemini-|mistral-|qwen|glm-|minimax-|deepseek-v)/i.test(idLower)) ||
     (/\b(tools?|fc)\b/i.test(idLower));
-  if (hasTools) capabilities.add('Tools');
+  recordCapability('Tools', hasTools, explicitlyFalse(
+    rawModel.supports_tool_calling,
+    capabilityObject.tools,
+    capabilityObject.function_calling
+  ));
 
   // Explicit or inferred Vision / Multimodal
   const hasVision = 
@@ -638,21 +681,30 @@ function normalizeOffer(providerId, rawModel) {
     (providerId === 'edenai' && rawModel.capabilities && (rawModel.capabilities.vision || (Array.isArray(rawModel.capabilities.input_modalities) && rawModel.capabilities.input_modalities.includes('image')))) ||
     (providerId === 'mammouth' && /^(gpt-4|gpt-5|claude-|gemini-|gemma-3|qwen.*vl|pixtral|glm-5v|llama-4|minimax-m3)/i.test(idLower)) ||
     (/\b(vision|image|vl|omni|pixtral|glm-5v)\b/i.test(idLower));
-  if (hasVision) capabilities.add('Vision');
+  recordCapability('Vision', hasVision, explicitlyFalse(
+    rawModel.supports_vision,
+    capabilityObject.vision
+  ));
 
   // Explicit or inferred Code
   const hasCode = 
     (providerId === 'cortecs' && Array.isArray(rawModel.tags) && rawModel.tags.includes('Code')) ||
     (providerId === 'edenai' && rawModel.capabilities && rawModel.capabilities.code) ||
     (/\b(code|coder|codex|devstral|codestral)\b/i.test(idLower));
-  if (hasCode) capabilities.add('Code');
+  recordCapability('Code', hasCode, explicitlyFalse(
+    rawModel.supports_code,
+    capabilityObject.code
+  ));
 
   // Explicit or inferred Audio
   const hasAudio = 
     (providerId === 'cortecs' && ((Array.isArray(rawModel.input_modalities) && rawModel.input_modalities.includes('audio')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Audio')))) ||
     (providerId === 'edenai' && rawModel.capabilities && Array.isArray(rawModel.capabilities.input_modalities) && rawModel.capabilities.input_modalities.includes('audio')) ||
     (/\b(audio|voice|speech|voxtral)\b/i.test(idLower));
-  if (hasAudio) capabilities.add('Audio');
+  recordCapability('Audio', hasAudio, explicitlyFalse(
+    rawModel.supports_audio,
+    capabilityObject.audio
+  ));
 
   // Explicit or inferred Structured Output / JSON Mode
   const hasStructuredOutput = 
@@ -661,13 +713,21 @@ function normalizeOffer(providerId, rawModel) {
     (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('structured_output')) ||
     (providerId === 'edenai' && rawModel.capabilities && rawModel.capabilities.structured_output) ||
     (providerId === 'mammouth' && /^(gpt-|claude-|gemini-|mistral)/i.test(idLower));
-  if (hasStructuredOutput) capabilities.add('Structured Output');
+  recordCapability('Structured Output', hasStructuredOutput, explicitlyFalse(
+    rawModel.supports_output_json_schema,
+    rawModel.supports_output_json_object,
+    capabilityObject.structured_output
+  ));
 
   // Prompt Caching
   const hasCaching = 
     (providerId === 'cortecs' && rawModel.pricing && (rawModel.pricing.cache_read_cost > 0 || rawModel.pricing.cache_write_cost > 0)) ||
     (providerId === 'requesty' && (rawModel.supports_caching || (rawModel.cached_price > 0)));
-  if (hasCaching) capabilities.add('Prompt Caching');
+  recordCapability('Prompt Caching', hasCaching, explicitlyFalse(
+    rawModel.supports_caching,
+    capabilityObject.caching,
+    capabilityObject.prompt_caching
+  ));
 
   // 4. Description extraction
   const description = rawModel.description && typeof rawModel.description === 'string' && rawModel.description.trim() ? rawModel.description.trim() : null;
@@ -691,6 +751,7 @@ function normalizeOffer(providerId, rawModel) {
     contextSize,
     maxOutputTokens,
     capabilities: [...capabilities],
+    capabilityStatus,
     description,
     infrastructure: {
       hosts,
@@ -800,9 +861,9 @@ function processAndUnifyModels() {
   
   function findGroup(id) {
     const slug = normalizeSlug(id);
-    const cleanBaseId = getCleanModelId(id);
+    const cleanBaseId = getGeneratedCanonicalId({ id });
     const digits = cleanBaseId.replace(/[^0-9]/g, '');
-    const canonicalId = STRICT_ALIASES[cleanBaseId] || cleanBaseId;
+    const canonicalId = cleanBaseId;
     
     return groups.find(g => {
       if (g.canonicalId === canonicalId) return true;
@@ -820,8 +881,8 @@ function processAndUnifyModels() {
 
     let group = findGroup(rawModel.id);
     if (!group) {
-      const cleanBaseId = getCleanModelId(rawModel.id);
-      const canonicalId = STRICT_ALIASES[cleanBaseId] || cleanBaseId;
+      const cleanBaseId = getGeneratedCanonicalId(rawModel);
+      const canonicalId = cleanBaseId;
       
       group = {
         canonicalId,
@@ -832,8 +893,11 @@ function processAndUnifyModels() {
       groups.push(group);
     }
     
-    group.offers[providerId] = rawModel;
-    group.normalizedOffers[providerId] = normalized;
+    const offerKey = providerId === 'mistral' && /@regional$/i.test(rawModel.id)
+      ? 'mistral-regional'
+      : providerId;
+    group.offers[offerKey] = rawModel;
+    group.normalizedOffers[offerKey] = normalized;
     
     if (providerId === 'cortecs' || group.creator === 'Other' || (normalized.creator && normalized.creator !== 'Other')) {
       group.creator = getModelCreator(group.canonicalId, normalized.creator);
@@ -887,17 +951,15 @@ function processAndUnifyModels() {
     descriptions.sort((a, b) => b.length - a.length);
     const description = descriptions.length > 0 ? descriptions[0] : null;
 
-    // Per-provider reasoning lookup
-    const supportsReasoning = {};
+    // Per-provider capability lookup
     const supportsCaching = {};
     for (const off of offerList) {
-      supportsReasoning[off.providerId] = off.capabilities.includes('Reasoning');
       supportsCaching[off.providerId] = off.capabilities.includes('Prompt Caching');
     }
 
     return {
       id: g.canonicalId,
-      name: g.canonicalId,
+      name: offerList.find(off => off.rawModel.display_name)?.rawModel.display_name || g.canonicalId,
       creator: g.creator,
       description,
       context_size: contextMin,
@@ -911,17 +973,18 @@ function processAndUnifyModels() {
       partialCapabilities,
       offers: g.offers,
       normalizedOffers: g.normalizedOffers,
-      supportsReasoning,
       supportsCaching,
       matched: totalOffers >= 2,
       cortecs: g.offers.cortecs || null,
       mammouth: g.offers.mammouth || null,
-      mistral: g.offers.mistral || null,
+       mistral: g.offers.mistral || null,
       edenai: g.offers.edenai || null,
       opper: g.offers.opper || null,
       eurouter: g.offers.eurouter || null,
       requesty: g.offers.requesty || null
     };
+  }).filter(model => {
+    return getInputCostPerMillion(model) !== null && getOutputCostPerMillion(model) !== null;
   });
 }
 
@@ -929,37 +992,37 @@ function getOfferInputCost(providerId, offer, currency = selectedCurrency) {
   if (!offer) return null;
   
   if (providerId === 'cortecs') {
-    if (!offer.pricing || offer.pricing.input_token === undefined) return 0;
+    if (!offer.pricing || offer.pricing.input_token === undefined) return null;
     const priceEur = offer.pricing.input_token;
     return currency === 'EUR' ? priceEur : priceEur * exchangeRate;
   }
   
   if (providerId === 'mammouth') {
-    if (!offer.model_info || offer.model_info.input_cost_per_token === undefined) return 0;
+    if (!offer.model_info || offer.model_info.input_cost_per_token === undefined) return null;
     const priceUsd = offer.model_info.input_cost_per_token * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
   
   if (providerId === 'mistral') {
-    if (!offer.pricing || offer.pricing.input_token === undefined) return 0;
-    const priceUsd = offer.pricing.input_token;
-    return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
+    if (!offer.pricing) return null;
+    if (currency === 'EUR') return offer.pricing.input_token_eur ?? null;
+    return offer.pricing.input_token ?? null;
   }
 
   if (providerId === 'edenai') {
-    if (!offer.pricing || offer.pricing.input_cost_per_token === undefined) return 0;
+    if (!offer.pricing || offer.pricing.input_cost_per_token === undefined) return null;
     const priceUsd = offer.pricing.input_cost_per_token * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
 
   if (providerId === 'opper') {
-    if (!offer.pricing || !Array.isArray(offer.pricing.input) || offer.pricing.input.length === 0) return 0;
+    if (!offer.pricing || !Array.isArray(offer.pricing.input) || offer.pricing.input.length === 0) return null;
     const priceUsd = offer.pricing.input[0];
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
 
   if (providerId === 'eurouter') {
-    if (!offer.pricing || offer.pricing.prompt === undefined) return 0;
+    if (!offer.pricing || offer.pricing.prompt === undefined) return null;
     const origCur = offer.pricing.currency || 'EUR';
     const priceVal = parseFloat(offer.pricing.prompt) * 1000000;
     if (origCur === 'EUR') {
@@ -970,7 +1033,7 @@ function getOfferInputCost(providerId, offer, currency = selectedCurrency) {
   }
 
   if (providerId === 'requesty') {
-    if (offer.input_price === undefined) return 0;
+    if (offer.input_price === undefined) return null;
     const priceUsd = offer.input_price * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
@@ -982,37 +1045,37 @@ function getOfferOutputCost(providerId, offer, currency = selectedCurrency) {
   if (!offer) return null;
   
   if (providerId === 'cortecs') {
-    if (!offer.pricing || offer.pricing.output_token === undefined) return 0;
+    if (!offer.pricing || offer.pricing.output_token === undefined) return null;
     const priceEur = offer.pricing.output_token;
     return currency === 'EUR' ? priceEur : priceEur * exchangeRate;
   }
   
   if (providerId === 'mammouth') {
-    if (!offer.model_info || offer.model_info.output_cost_per_token === undefined) return 0;
+    if (!offer.model_info || offer.model_info.output_cost_per_token === undefined) return null;
     const priceUsd = offer.model_info.output_cost_per_token * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
   
   if (providerId === 'mistral') {
-    if (!offer.pricing || offer.pricing.output_token === undefined) return 0;
-    const priceUsd = offer.pricing.output_token;
-    return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
+    if (!offer.pricing) return null;
+    if (currency === 'EUR') return offer.pricing.output_token_eur ?? null;
+    return offer.pricing.output_token ?? null;
   }
 
   if (providerId === 'edenai') {
-    if (!offer.pricing || offer.pricing.output_cost_per_token === undefined) return 0;
+    if (!offer.pricing || offer.pricing.output_cost_per_token === undefined) return null;
     const priceUsd = offer.pricing.output_cost_per_token * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
 
   if (providerId === 'opper') {
-    if (!offer.pricing || !Array.isArray(offer.pricing.output) || offer.pricing.output.length === 0) return 0;
+    if (!offer.pricing || !Array.isArray(offer.pricing.output) || offer.pricing.output.length === 0) return null;
     const priceUsd = offer.pricing.output[0];
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
 
   if (providerId === 'eurouter') {
-    if (!offer.pricing || offer.pricing.completion === undefined) return 0;
+    if (!offer.pricing || offer.pricing.completion === undefined) return null;
     const origCur = offer.pricing.currency || 'EUR';
     const priceVal = parseFloat(offer.pricing.completion) * 1000000;
     if (origCur === 'EUR') {
@@ -1023,7 +1086,7 @@ function getOfferOutputCost(providerId, offer, currency = selectedCurrency) {
   }
 
   if (providerId === 'requesty') {
-    if (offer.output_price === undefined) return 0;
+    if (offer.output_price === undefined) return null;
     const priceUsd = offer.output_price * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
@@ -1053,32 +1116,12 @@ function getInputCostPerMillion(modelObj, currency = selectedCurrency) {
     const cost = getOfferInputCost(providerId, offer, currency);
     if (cost !== null) activeOffers.push(cost);
   }
-  return activeOffers.length > 0 ? Math.min(...activeOffers) : 0;
+  return activeOffers.length > 0 ? Math.min(...activeOffers) : null;
 }
 
 function getOutputCostPerMillion(modelObj, currency = selectedCurrency) {
   const activeOffers = [];
   for (const [providerId, offer] of Object.entries(modelObj.offers)) {
-    const cost = getOfferOutputCost(providerId, offer, currency);
-    if (cost !== null) activeOffers.push(cost);
-  }
-  return activeOffers.length > 0 ? Math.min(...activeOffers) : 0;
-}
-
-function getInputCostPerMillionWithReasoning(modelObj, currency = selectedCurrency) {
-  const activeOffers = [];
-  for (const [providerId, offer] of Object.entries(modelObj.offers)) {
-    if (!modelObj.supportsReasoning || !modelObj.supportsReasoning[providerId]) continue;
-    const cost = getOfferInputCost(providerId, offer, currency);
-    if (cost !== null) activeOffers.push(cost);
-  }
-  return activeOffers.length > 0 ? Math.min(...activeOffers) : null;
-}
-
-function getOutputCostPerMillionWithReasoning(modelObj, currency = selectedCurrency) {
-  const activeOffers = [];
-  for (const [providerId, offer] of Object.entries(modelObj.offers)) {
-    if (!modelObj.supportsReasoning || !modelObj.supportsReasoning[providerId]) continue;
     const cost = getOfferOutputCost(providerId, offer, currency);
     if (cost !== null) activeOffers.push(cost);
   }
@@ -1089,6 +1132,7 @@ function getOutputCostPerMillionWithReasoning(modelObj, currency = selectedCurre
 function getWorkloadCost(modelObj, currency = selectedCurrency) {
   const inCost = getInputCostPerMillion(modelObj, currency);
   const outCost = getOutputCostPerMillion(modelObj, currency);
+  if (inCost === null || outCost === null) return null;
   if (inCost === 0 || outCost === 0) return 0;
   return (inCost * workloadInputTokens + outCost * workloadOutputTokens) / 1000000;
 }
@@ -1112,21 +1156,11 @@ function getBestProviderDetails(modelObj, currency = selectedCurrency) {
   
   activeOffers.sort((a, b) => a.totalCost - b.totalCost);
   
-  const best = activeOffers[0];
-  
-  let savingsTag = '';
-  if (activeOffers.length > 1) {
-    const nextCheapest = activeOffers[1];
-    const savingsPercent = Math.round((1 - best.totalCost / nextCheapest.totalCost) * 100);
-    if (savingsPercent > 0) {
-      savingsTag = `Save ${savingsPercent}%`;
-    }
-  }
-  
+  const bestTotal = activeOffers[0].totalCost;
+  const lowestOffers = activeOffers.filter(offer => areCostsEqual(offer.totalCost, bestTotal));
+
   return {
-    providerId: best.providerId,
-    providerName: PROVIDER_DISPLAY_NAMES[best.providerId] || best.providerId,
-    savingsTag
+    providerIds: lowestOffers.map(offer => offer.providerId)
   };
 }
 
@@ -1140,6 +1174,82 @@ function renderCreatorsFilter() {
   
   select.innerHTML = '<option value="all">All Creators</option>' + 
     creators.map(creator => `<option value="${creator}">${creator}</option>`).join('');
+}
+
+function costToSliderValue(cost, scaleMax) {
+  if (cost <= 0) return 0;
+  if (scaleMax <= COST_LOG_MIN) return COST_SLIDER_STEPS;
+  const logRange = Math.log(scaleMax) - Math.log(COST_LOG_MIN);
+  return Math.round(((Math.log(cost) - Math.log(COST_LOG_MIN)) / logRange) * COST_SLIDER_STEPS);
+}
+
+function sliderToCost(value, scaleMax) {
+  if (value <= 0) return 0;
+  if (scaleMax <= COST_LOG_MIN) return scaleMax;
+  const logRange = Math.log(scaleMax) - Math.log(COST_LOG_MIN);
+  return Math.exp(Math.log(COST_LOG_MIN) + (value / COST_SLIDER_STEPS) * logRange);
+}
+
+function updateCostFilterDisplay(key) {
+  const range = costFilterRanges[key];
+  const minInput = document.getElementById(`${key}-cost-min`);
+  const maxInput = document.getElementById(`${key}-cost-max`);
+  const minLabel = document.getElementById(`${key}-cost-min-label`);
+  const maxLabel = document.getElementById(`${key}-cost-max-label`);
+  const fill = document.getElementById(`${key}-cost-range-fill`);
+  if (!minInput || !maxInput || !minLabel || !maxLabel || !fill) return;
+
+  const minSliderValue = costToSliderValue(range.min, range.scaleMax);
+  const maxSliderValue = costToSliderValue(range.max, range.scaleMax);
+  minInput.value = minSliderValue;
+  maxInput.value = maxSliderValue;
+  minLabel.textContent = `From ${formatCurrency(range.min)}`;
+  maxLabel.textContent = `To ${formatCurrency(range.max)}`;
+
+  fill.style.left = `${(minSliderValue / COST_SLIDER_STEPS) * 100}%`;
+  fill.style.right = `${100 - (maxSliderValue / COST_SLIDER_STEPS) * 100}%`;
+}
+
+function configureCostFilters() {
+  const filters = [
+    { key: 'input', getter: getInputCostPerMillion },
+    { key: 'output', getter: getOutputCostPerMillion }
+  ];
+
+  filters.forEach(({ key, getter }) => {
+    const minInput = document.getElementById(`${key}-cost-min`);
+    const maxInput = document.getElementById(`${key}-cost-max`);
+    if (!minInput || !maxInput) return;
+
+    const largestCost = unifiedModels.reduce((max, model) => {
+      const cost = getter(model);
+      return typeof cost === 'number' ? Math.max(max, cost) : max;
+    }, 0);
+    const scaleMax = Math.max(largestCost, COST_LOG_MIN);
+    minInput.max = COST_SLIDER_STEPS;
+    maxInput.max = COST_SLIDER_STEPS;
+    minInput.step = 1;
+    maxInput.step = 1;
+    costFilterRanges[key] = { min: 0, max: scaleMax, scaleMax };
+    updateCostFilterDisplay(key);
+  });
+}
+
+function getContextRange(modelObj) {
+  const offerIds = Object.keys(modelObj.normalizedOffers || {});
+  const selectedOfferIds = selectedProvider.length === 0
+    ? offerIds
+    : offerIds.filter(providerId => selectedProvider.includes(providerId) || (selectedProvider.includes('matched') && modelObj.matched));
+  const contextValues = selectedOfferIds
+    .map(providerId => modelObj.normalizedOffers[providerId]?.contextSize)
+    .filter(value => typeof value === 'number' && value > 0);
+
+  if (contextValues.length === 0) return { min: null, max: null, count: 0 };
+  return {
+    min: Math.min(...contextValues),
+    max: Math.max(...contextValues),
+    count: contextValues.length
+  };
 }
 
 function applyFiltersAndRender() {
@@ -1165,9 +1275,25 @@ function applyFiltersAndRender() {
     if (selectedCreator !== 'all' && m.creator !== selectedCreator) return false;
 
     // 4. Min Context Size Filter
+    const contextRange = getContextRange(m);
     if (minContextSize > 0) {
-      if (!m.context_size || m.context_size < minContextSize) return false;
+      // Unknown context limits should remain visible; the filter only excludes
+      // models whose known minimum is below the requested threshold.
+      if (contextRange.min && contextRange.min < minContextSize) return false;
     }
+
+    // 5. Best input/output price ranges
+    const inputCost = getInputCostPerMillion(m);
+    const outputCost = getOutputCostPerMillion(m);
+    if (inputCost === null || outputCost === null) return false;
+    const inputRange = costFilterRanges.input;
+    const outputRange = costFilterRanges.output;
+    if (inputCost === null
+      ? inputRange.min > 0 || inputRange.max < inputRange.scaleMax
+      : inputCost < inputRange.min || inputCost > inputRange.max) return false;
+    if (outputCost === null
+      ? outputRange.min > 0 || outputRange.max < outputRange.scaleMax
+      : outputCost < outputRange.min || outputCost > outputRange.max) return false;
 
     return true;
   });
@@ -1186,28 +1312,16 @@ function applyFiltersAndRender() {
         valB = b.creator;
         break;
       case 'context':
-        valA = a.context_size || 0;
-        valB = b.context_size || 0;
+        valA = getContextRange(a).min || 0;
+        valB = getContextRange(b).min || 0;
         break;
       case 'input':
-        valA = getInputCostPerMillion(a);
-        valB = getInputCostPerMillion(b);
+        valA = getInputCostPerMillion(a) ?? Infinity;
+        valB = getInputCostPerMillion(b) ?? Infinity;
         break;
       case 'output':
-        valA = getOutputCostPerMillion(a);
-        valB = getOutputCostPerMillion(b);
-        break;
-      case 'savings':
-        const detailsA = getBestProviderDetails(a);
-        const detailsB = getBestProviderDetails(b);
-        const pctA = detailsA && detailsA.savingsTag ? parseInt(detailsA.savingsTag.replace(/[^0-9]/g, '')) : -1;
-        const pctB = detailsB && detailsB.savingsTag ? parseInt(detailsB.savingsTag.replace(/[^0-9]/g, '')) : -1;
-        valA = pctA;
-        valB = pctB;
-        break;
-      case 'reasoning':
-        valA = (() => { const i = getInputCostPerMillionWithReasoning(a); const o = getOutputCostPerMillionWithReasoning(a); return (i === null || o === null) ? Infinity : i + o; })();
-        valB = (() => { const i = getInputCostPerMillionWithReasoning(b); const o = getOutputCostPerMillionWithReasoning(b); return (i === null || o === null) ? Infinity : i + o; })();
+        valA = getOutputCostPerMillion(a) ?? Infinity;
+        valB = getOutputCostPerMillion(b) ?? Infinity;
         break;
       case 'workload':
         valA = getWorkloadCost(a) || Infinity;
@@ -1231,12 +1345,11 @@ function applyFiltersAndRender() {
 
   const countDisplay = document.getElementById('model-count-display');
   if (countDisplay) {
-    if (filtered.length === unifiedModels.length) {
-      countDisplay.textContent = unifiedModels.length;
-    } else {
-      countDisplay.textContent = `${filtered.length} of ${unifiedModels.length}`;
-    }
+    countDisplay.textContent = `${filtered.length}/${unifiedModels.length} shown`;
   }
+
+  const totalDisplay = document.getElementById('model-total-display');
+  if (totalDisplay) totalDisplay.textContent = unifiedModels.length;
 
   renderTable(filtered);
 }
@@ -1245,6 +1358,7 @@ function applyFiltersAndRender() {
 
 function formatCurrency(val, currency = selectedCurrency) {
   const sym = currency === 'USD' ? '$' : '€';
+  if (val === null || val === undefined || Number.isNaN(val)) return 'N/A';
   if (val === 0) return `${sym}0.00`;
   
   if (val < 0.01) {
@@ -1262,7 +1376,7 @@ function renderTable(models) {
     if (isInitialLoad) return;
     tbody.innerHTML = `
       <tr>
-        <td colspan="9">
+        <td colspan="8">
           <div class="empty-state">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
             <p>No models match your filter criteria.</p>
@@ -1277,26 +1391,22 @@ function renderTable(models) {
     const inputCost = getInputCostPerMillion(m);
     const outputCost = getOutputCostPerMillion(m);
 
-    // Guaranteed Context format (Strict Consensus floor)
+    // Minimum context format for the currently selected providers.
+    const contextRange = getContextRange(m);
     let contextStr = '<span style="color: var(--text-dark);">Unknown</span>';
-    if (m.context_size) {
-      const offersCount = Object.keys(m.offers).length;
-      if (m.contextMin !== null && m.contextMax !== null && m.contextMin < m.contextMax) {
-        const tooltip = `Guaranteed Context Floor: ${m.contextMin.toLocaleString()} tokens\n(Range across ${offersCount} providers: ${m.contextMin.toLocaleString()} – ${m.contextMax.toLocaleString()} tokens)`;
-        contextStr = `<span title="${tooltip}" style="cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.35);">${m.context_size.toLocaleString()}</span>`;
+    if (contextRange.min) {
+      if (contextRange.max !== null && contextRange.min < contextRange.max) {
+        const tooltip = `Minimum Context Window: ${contextRange.min.toLocaleString()} tokens\n(Range across ${contextRange.count} providers: ${contextRange.min.toLocaleString()} – ${contextRange.max.toLocaleString()} tokens)`;
+        contextStr = `<span title="${tooltip}" style="cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.35);">${contextRange.min.toLocaleString()}</span>`;
       } else {
-        contextStr = m.context_size.toLocaleString();
+        contextStr = contextRange.min.toLocaleString();
       }
     }
 
     // Provider badges list
     const availableProvidersHtml = Object.keys(m.offers).map(providerId => {
-      let badgeClass = 'badge-both';
-      if (providerId === 'mammouth') badgeClass = 'badge-mammouth';
-      else if (providerId === 'cortecs') badgeClass = 'badge-cortecs';
-      
       const providerName = PROVIDER_DISPLAY_NAMES[providerId] || providerId;
-      return `<span class="badge ${badgeClass}" style="margin-right: 4px; font-size: 0.7rem;">${providerName}</span>`;
+      return `<span class="badge ${PROVIDER_BADGE_CLASS}" style="margin-right: 4px; font-size: 0.7rem;">${providerName}</span>`;
     }).join('');
 
     // Best Provider details column
@@ -1314,48 +1424,28 @@ function renderTable(models) {
         .sort((a, b) => a.total - b.total);
       const bestTotal = allOfferCosts.length ? allOfferCosts[0].total : null;
       const tooltipLines = allOfferCosts.map(o => {
-        if (bestTotal && o.total > bestTotal) {
+        if (!areCostsEqual(o.total, bestTotal)) {
           const mult = (o.total / bestTotal).toFixed(1);
           return `${o.name} ${mult}×`;
         }
-        return `${o.name} (best)`;
+        return `${o.name} (lowest listed price)`;
       });
       const tooltipAttr = tooltipLines.length > 1
         ? ` title="All providers (sorted by cost):\n${tooltipLines.join('\n')}"`
         : '';
-      const savingsBadge = bestDetails.savingsTag
-        ? `<span class="savings-tag" style="font-size:0.65rem; padding: 2px 6px; margin-left: 6px; box-shadow: none; vertical-align: middle;">${bestDetails.savingsTag}</span>`
-        : '';
-      bestProviderHtml = `<span style="font-weight:600; color:#fff; cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.3);"${tooltipAttr}>${bestDetails.providerName}</span>${savingsBadge}`;
-    }
-
-    // Best w/ Reasoning column
-    const reasonIn = getInputCostPerMillionWithReasoning(m);
-    const reasonOut = getOutputCostPerMillionWithReasoning(m);
-    const hasReasoning = reasonIn !== null && reasonOut !== null;
-    const reasonTotal = hasReasoning ? reasonIn + reasonOut : null;
-    const bestTotalAll = (() => {
-      const ic = getInputCostPerMillion(m);
-      const oc = getOutputCostPerMillion(m);
-      return ic + oc;
-    })();
-    let reasoningHtml = '<span style="color: var(--text-dark);">—</span>';
-    if (hasReasoning) {
-      const reasonInFmt = formatCurrency(reasonIn);
-      const reasonOutFmt = formatCurrency(reasonOut);
-      const reasonTotalFmt = formatCurrency(reasonTotal);
-      const premium = bestTotalAll > 0 ? ((reasonTotal - bestTotalAll) / bestTotalAll * 100).toFixed(0) : '0';
-      const premiumSign = reasonTotal > bestTotalAll ? '+' : '';
-      const reasonTooltip = `Reasoning: ${reasonInFmt} input + ${reasonOutFmt} output = ${reasonTotalFmt} / 1M\n${premiumSign}${premium}% vs. best non-reasoning`;
-      reasoningHtml = `<span title="${reasonTooltip}" style="cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.3);">${reasonTotalFmt}</span>`;
+      const lowestProviderBadges = bestDetails.providerIds.map(providerId => {
+        const providerName = PROVIDER_DISPLAY_NAMES[providerId] || providerId;
+        return `<span class="badge ${PROVIDER_BADGE_CLASS}" style="margin-right: 4px; font-size: 0.7rem;">${providerName}</span>`;
+      }).join('');
+      bestProviderHtml = `<span style="cursor: help;"${tooltipAttr}>${lowestProviderBadges}</span>`;
     }
 
     // Cost (your workload) column
     const workloadCost = getWorkloadCost(m);
-    const workloadFmt = workloadCost > 0 ? formatCurrency(workloadCost) : '—';
-    const workloadTooltip = workloadCost > 0
-      ? `Cheapest offer: ${formatCurrency(inputCost)} input + ${formatCurrency(outputCost)} output per 1M\n(${workloadInputTokens.toLocaleString()} in + ${workloadOutputTokens.toLocaleString()} out) × rate ÷ 1,000,000`
-      : 'No pricing data available';
+    const workloadFmt = workloadCost === null ? 'N/A' : formatCurrency(workloadCost);
+    const workloadTooltip = workloadCost !== null
+      ? `Lowest-priced offer: ${formatCurrency(inputCost)} input + ${formatCurrency(outputCost)} output per 1M\n(${workloadInputTokens.toLocaleString()} in + ${workloadOutputTokens.toLocaleString()} out) × rate ÷ 1,000,000`
+      : 'Pricing unavailable';
     const workloadHtml = `<span title="${workloadTooltip}" style="cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.3);">${workloadFmt}</span>`;
 
     // Strict Universal Capabilities on Table Row
@@ -1366,7 +1456,7 @@ function renderTable(models) {
     return `
       <tr class="clickable-row" onclick="openComparison('${m.id}')" title="Click to view details and provider comparison">
         <td>
-          <div style="font-weight: 600; color: #ffffff;">${getHumanFriendlyName(m.id)}</div>
+          <div class="model-name">${getHumanFriendlyName(m.id)}</div>
           <div class="tag-list" style="margin-top: 4px;">
             ${tagsHtml}
           </div>
@@ -1382,7 +1472,6 @@ function renderTable(models) {
         <td style="font-family: var(--font-mono);">${contextStr}</td>
         <td style="font-family: var(--font-mono);">${formatCurrency(inputCost)}</td>
         <td style="font-family: var(--font-mono);">${formatCurrency(outputCost)}</td>
-        <td style="font-family: var(--font-mono);">${reasoningHtml}</td>
         <td style="font-family: var(--font-mono);">${workloadHtml}</td>
         <td>${bestProviderHtml}</td>
       </tr>
@@ -1410,9 +1499,10 @@ function openModalWithSelection(modelObj) {
   const offersList = [];
   for (const [providerId, rawOffer] of Object.entries(modelObj.offers)) {
     const normOffer = (modelObj.normalizedOffers && modelObj.normalizedOffers[providerId]) || normalizeOffer(providerId, rawOffer);
-    const inCost = getOfferInputCost(providerId, rawOffer, selectedCurrency);
-    const outCost = getOfferOutputCost(providerId, rawOffer, selectedCurrency);
-    const cacheCost = getOfferCacheReadCost(providerId, rawOffer, selectedCurrency);
+    const pricingProviderId = providerId === 'mistral-regional' ? 'mistral' : providerId;
+    const inCost = getOfferInputCost(pricingProviderId, rawOffer, selectedCurrency);
+    const outCost = getOfferOutputCost(pricingProviderId, rawOffer, selectedCurrency);
+    const cacheCost = getOfferCacheReadCost(pricingProviderId, rawOffer, selectedCurrency);
     
     let origIn = '', origOut = '', origCache = '';
     if (providerId === 'mammouth' && rawOffer && rawOffer.model_info) {
@@ -1432,7 +1522,7 @@ function openModalWithSelection(modelObj) {
       if (typeof rawOffer.pricing.cache_read_cost === 'number') {
         origCache = `€${rawOffer.pricing.cache_read_cost.toFixed(2)} EUR`;
       }
-    } else if (providerId === 'mistral' && rawOffer && rawOffer.pricing) {
+    } else if (pricingProviderId === 'mistral' && rawOffer && rawOffer.pricing) {
       if (typeof rawOffer.pricing.input_token === 'number') {
         origIn = `$${rawOffer.pricing.input_token.toFixed(2)} USD`;
       }
@@ -1478,7 +1568,7 @@ function openModalWithSelection(modelObj) {
       inCost,
       outCost,
       cacheCost,
-      totalCost: (inCost || 0) + (outCost || 0),
+      totalCost: inCost !== null && outCost !== null ? inCost + outCost : Infinity,
       origIn,
       origOut,
       origCache,
@@ -1538,38 +1628,20 @@ function openModalWithSelection(modelObj) {
 
   // 2. Provider Comparison Cards Grid
   const cardsHtml = offersList.map((off, idx) => {
-    const isCheapest = idx === 0 && offersList.length > 1;
-    
-    const badgeClassMap = {
-      mammouth: 'badge-mammouth',
-      cortecs: 'badge-cortecs',
-      mistral: 'badge-both',
-      edenai: 'badge-both',
-      opper: 'badge-both',
-      eurouter: 'badge-cortecs',
-      requesty: 'badge-mammouth'
-    };
-    const badgeClass = badgeClassMap[off.providerId] || 'badge-both';
-    
-    let markupBadge = '';
-    if (idx > 0 && offersList.length > 1) {
-      const cheapestCost = offersList[0].totalCost;
-      const markupPercent = Math.round((off.totalCost - cheapestCost) / (cheapestCost || 1) * 100);
-      markupBadge = `<span style="font-size:0.72rem; font-weight:700; color:var(--cortecs-color); background: rgba(168, 85, 247, 0.1); padding: 2px 6px; border-radius: 4px;">+${markupPercent}% Cost</span>`;
-    } else if (isCheapest) {
-      markupBadge = `<span class="badge-both" style="font-size:0.7rem; padding: 2px 6px;">Best Value</span>`;
-    }
-
-    const cardStyle = isCheapest 
-      ? 'background: rgba(16, 185, 129, 0.03); border: 2px solid var(--savings-color); box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);' 
-      : 'background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color);';
+    const badgeClass = PROVIDER_BADGE_CLASS;
+    const cardStyle = 'background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color);';
 
     // Provider Capabilities Checklist
     const capChecklistHtml = STANDARD_CAPABILITIES.map(cap => {
-      const supported = off.normOffer.capabilities.includes(cap);
+      const status = off.normOffer.capabilityStatus[cap] || 'unknown';
+      const statusMeta = {
+        supported: { symbol: '✓', color: '#34d399', label: 'Supported' },
+        unknown: { symbol: '?', color: '#94a3b8', label: 'Not reported' },
+        unsupported: { symbol: '—', color: '#475569', label: 'Explicitly unsupported' }
+      }[status];
       return `
-        <span style="font-size:0.7rem; padding: 1px 5px; border-radius: 3px; ${supported ? 'color:#FFCC00; background:rgba(255,204,0,0.1); border:1px solid rgba(255,204,0,0.3); font-weight:600;' : 'color:var(--text-dark); background:rgba(255,255,255,0.02);'}">
-          ${supported ? '✓' : '—'} ${cap}
+        <span title="${CAPABILITY_DESCRIPTIONS[cap]} ${statusMeta.label}." aria-label="${cap}: ${CAPABILITY_DESCRIPTIONS[cap]} ${statusMeta.label}." style="font-size:0.7rem; padding: 1px 5px; border-radius: 3px; color:${statusMeta.color}; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); font-weight:600;">
+          ${statusMeta.symbol} ${cap}
         </span>
       `;
     }).join('');
@@ -1627,7 +1699,6 @@ function openModalWithSelection(modelObj) {
       <div class="modal-model-card" style="${cardStyle}">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <span class="badge ${badgeClass}">${off.providerName}</span>
-          ${markupBadge}
         </div>
         
         <div>
@@ -1656,13 +1727,13 @@ function openModalWithSelection(modelObj) {
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
           <div class="modal-field">
             <span class="lbl" style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700;">Input / 1M</span>
-            <span class="val" style="font-size:1rem; font-weight:700; font-family:var(--font-mono); color:${isCheapest ? 'var(--savings-color)' : '#fff'}">${formatCurrency(off.inCost)}</span>
+            <span class="val" style="font-size:1rem; font-weight:700; font-family:var(--font-mono); color:#fff">${formatCurrency(off.inCost)}</span>
             <span class="desc" style="font-size:0.68rem; color:var(--text-muted);">${off.origIn}</span>
           </div>
           
           <div class="modal-field">
             <span class="lbl" style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700;">Output / 1M</span>
-            <span class="val" style="font-size:1rem; font-weight:700; font-family:var(--font-mono); color:${isCheapest ? 'var(--savings-color)' : '#fff'}">${formatCurrency(off.outCost)}</span>
+            <span class="val" style="font-size:1rem; font-weight:700; font-family:var(--font-mono); color:#fff">${formatCurrency(off.outCost)}</span>
             <span class="desc" style="font-size:0.68rem; color:var(--text-muted);">${off.origOut}</span>
           </div>
         </div>
@@ -1686,35 +1757,14 @@ function openModalWithSelection(modelObj) {
     `;
   }).join('');
 
-  // 3. Savings Highlight Banner
-  let savingsBannerHtml = '';
-  if (offersList.length >= 2) {
-    const best = offersList[0];
-    const second = offersList[1];
-    const savingsPercent = Math.round((1 - best.totalCost / (second.totalCost || 1)) * 100);
-    
-    savingsBannerHtml = `
-      <div class="price-highlight-row" style="margin-top: 0.5rem; width:100%; display:flex; justify-content:space-between; align-items:center; padding:1rem 1.5rem; border-radius:8px; background:var(--savings-bg); border:1px solid rgba(16, 185, 129, 0.2);">
-        <div class="banner-text">
-          <h4 id="savings-title" style="font-family:var(--font-title); font-weight:800; color:#fff; font-size:1.1rem; margin-bottom:2px;">${best.providerName} is the cheapest!</h4>
-          <p id="savings-desc" style="font-size:0.85rem; color:var(--text-muted);">${savingsPercent > 0 ? `Save ${savingsPercent}% on total cost compared to the next provider.` : 'Both providers charge identical rates.'}</p>
-        </div>
-        <div class="savings-cost-summary" style="display:flex; gap:1.5rem;">
-          <div class="summary-block">
-            <span class="lbl" style="font-size:0.7rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block;">Total Saving</span>
-            <span class="val" id="savings-input-val" style="font-size:1.5rem; font-family:var(--font-title); font-weight:800; color:var(--savings-color);">${savingsPercent}%</span>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
   modalContent.innerHTML = `
     ${overviewHtml}
     <div class="modal-cards-grid">
       ${cardsHtml}
     </div>
-    ${savingsBannerHtml}
+    <p class="comparison-note">
+      <strong>Price comparison only.</strong> Listed prices do not indicate overall suitability. Before choosing a provider, verify supported features such as caching and tools, rate limits and quotas, context and output limits, latency, availability and reliability, data retention and training policies, data residency, security and compliance requirements, API compatibility, support, and SLA terms.
+    </p>
   `;
 
   overlay.classList.add('active');
@@ -1723,7 +1773,27 @@ function openModalWithSelection(modelObj) {
 // --- SETUP EVENT LISTENERS ---
 
 function setupUIEventListeners() {
-  // 1. Currency Switcher Widget
+  // 1. Theme toggle
+  const themeToggle = document.getElementById('theme-toggle');
+  if (themeToggle) {
+    const updateThemeToggle = () => {
+      const isLight = selectedTheme === 'light';
+      document.documentElement.dataset.theme = selectedTheme;
+      localStorage.setItem('euroinference-theme', selectedTheme);
+      themeToggle.setAttribute('aria-label', `Switch to ${isLight ? 'dark' : 'light'} mode`);
+      themeToggle.title = `Switch to ${isLight ? 'dark' : 'light'} mode`;
+    };
+    updateThemeToggle();
+    themeToggle.addEventListener('click', () => {
+      selectedTheme = selectedTheme === 'light' ? 'dark' : 'light';
+      updateThemeToggle();
+    });
+  }
+
+  // Regional Mistral pricing is a separate offer for the same API family.
+  // Keep it as its own detail card rather than collapsing it into the base offer.
+
+  // 2. Currency Switcher Widget
   const switcher = document.getElementById('currency-switcher-widget');
   if (switcher) {
     switcher.addEventListener('click', (e) => {
@@ -1736,11 +1806,12 @@ function setupUIEventListeners() {
       selectedCurrency = option.dataset.currency;
       console.log('Switched currency to:', selectedCurrency);
       
+      configureCostFilters();
       applyFiltersAndRender();
     });
   }
 
-  // 2. Inline Header Filters
+  // 3. Inline Header Filters
   const filterIdInput = document.getElementById('filter-id');
   if (filterIdInput) {
     filterIdInput.addEventListener('input', (e) => {
@@ -1749,11 +1820,60 @@ function setupUIEventListeners() {
     });
   }
 
-  const filterSourceSelect = document.getElementById('filter-source');
-  if (filterSourceSelect) {
-    filterSourceSelect.addEventListener('change', (e) => {
-      selectedProvider = Array.from(e.target.selectedOptions).map(o => o.value);
+  const providerDropdown = document.getElementById('filter-source-dropdown');
+  const providerToggle = document.getElementById('filter-source-toggle');
+  const providerMenu = document.getElementById('filter-source-menu');
+  if (providerDropdown && providerToggle && providerMenu) {
+    const providerCheckboxes = Array.from(providerMenu.querySelectorAll('input[type="checkbox"]'));
+
+    const updateProviderFilter = () => {
+      selectedProvider = providerCheckboxes.filter(input => input.checked).map(input => input.value);
+      providerToggle.textContent = selectedProvider.length === 0
+        ? 'All Providers'
+        : `${selectedProvider.length} selected`;
       applyFiltersAndRender();
+    };
+
+    const positionProviderMenu = () => {
+      const rect = providerToggle.getBoundingClientRect();
+      const menuWidth = Math.max(rect.width, providerMenu.offsetWidth);
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8));
+      providerMenu.style.top = `${rect.bottom + 4}px`;
+      providerMenu.style.left = `${left}px`;
+      providerMenu.style.minWidth = `${rect.width}px`;
+    };
+
+    const closeProviderMenu = () => {
+      providerMenu.hidden = true;
+      providerToggle.setAttribute('aria-expanded', 'false');
+    };
+
+    providerToggle.addEventListener('click', () => {
+      const isOpening = providerMenu.hidden;
+      providerMenu.hidden = !isOpening;
+      providerToggle.setAttribute('aria-expanded', String(isOpening));
+      if (isOpening) positionProviderMenu();
+    });
+
+    providerToggle.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeProviderMenu();
+      } else if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        providerMenu.hidden = false;
+        providerToggle.setAttribute('aria-expanded', 'true');
+        positionProviderMenu();
+      }
+    });
+
+    providerCheckboxes.forEach(input => input.addEventListener('change', updateProviderFilter));
+    providerDropdown.addEventListener('click', e => e.stopPropagation());
+    document.addEventListener('click', closeProviderMenu);
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeProviderMenu();
+    });
+    window.addEventListener('resize', () => {
+      if (!providerMenu.hidden) positionProviderMenu();
     });
   }
 
@@ -1765,16 +1885,47 @@ function setupUIEventListeners() {
     });
   }
 
+  ['input', 'output'].forEach(key => {
+    const minInput = document.getElementById(`${key}-cost-min`);
+    const maxInput = document.getElementById(`${key}-cost-max`);
+    if (!minInput || !maxInput) return;
+
+    const updateRange = (bound, e) => {
+      const range = costFilterRanges[key];
+      const value = sliderToCost(Number(e.target.value), range.scaleMax);
+      if (bound === 'min') {
+        range.min = value;
+        if (range.min > range.max) range.max = range.min;
+      } else {
+        range.max = value;
+        if (range.max < range.min) range.min = range.max;
+      }
+      updateCostFilterDisplay(key);
+    };
+
+    minInput.addEventListener('input', e => updateRange('min', e));
+    maxInput.addEventListener('input', e => updateRange('max', e));
+    minInput.addEventListener('change', () => applyFiltersAndRender());
+    maxInput.addEventListener('change', () => applyFiltersAndRender());
+  });
+
   // 2b. Workload estimator inputs
-  const minContextInput = document.getElementById('filter-min-context');
-  if (minContextInput) {
+  const minContextInputs = Array.from(document.querySelectorAll('#filter-context-size'));
+  if (minContextInputs.length > 0) {
     const handler = (e) => {
       const v = parseInt(e.target.value, 10);
       minContextSize = isNaN(v) || v < 0 ? 0 : v;
+      minContextInputs.forEach(input => {
+        if (input !== e.target) {
+          input.value = minContextSize || '';
+        }
+      });
       applyFiltersAndRender();
     };
-    minContextInput.addEventListener('input', handler);
-    minContextInput.addEventListener('change', handler);
+    minContextInputs.forEach(input => {
+      input.addEventListener('input', handler);
+      input.addEventListener('change', handler);
+    });
   }
   const inputTokensInput = document.getElementById('filter-input-tokens');
   if (inputTokensInput) {
@@ -1802,7 +1953,7 @@ function setupUIEventListeners() {
   }
 
   // Prevent sorting when clicking inside header filter inputs/selects
-  document.querySelectorAll('.header-filter-input, .header-filter-select').forEach(el => {
+  document.querySelectorAll('.header-filter-input, .provider-filter-toggle, .provider-filter-menu').forEach(el => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
     });

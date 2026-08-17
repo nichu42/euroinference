@@ -1,0 +1,86 @@
+{
+  "creator_aliases": {
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "google": "Google",
+    "deepseek": "DeepSeek",
+    "mistral": "Mistral AI",
+    "mistral ai": "Mistral AI",
+    "alibaba": "Alibaba Cloud",
+    "alibaba cloud": "Alibaba Cloud",
+    "zhipu": "Zhipu AI",
+    "zhipu ai": "Zhipu AI",
+    "z.ai": "Zhipu AI",
+    "moonshot": "Moonshot AI",
+    "moonshot ai": "Moonshot AI",
+    "meta": "Meta",
+    "cohere": "Cohere",
+    "perplexity": "Perplexity",
+    "xai": "xAI",
+    "x.ai": "xAI"
+  },
+  "display_names": {
+    "mistral-large": "Mistral Large",
+    "mistral-medium": "Mistral Medium",
+    "mistral-small": "Mistral Small",
+    "ministral-3b": "Ministral 3B",
+    "ministral-8b": "Ministral 8B",
+    "ministral-14b": "Ministral 14B",
+    "codestral": "Codestral",
+    "glm-5.2": "GLM 5.2"
+  },
+  "strict_aliases": {
+    "r1": "deepseek-r1",
+    "claude-opus4-8": "claude-opus-4-8",
+    "claude-opus4-7": "claude-opus-4-7",
+    "claude-opus4-6": "claude-opus-4-6",
+    "claude-opus4-5": "claude-opus-4-5",
+    "gemini-3.1-flash-lite": "gemini-3.1-flash-lite-preview",
+    "mistral-medium-3.5": "mistral-medium-3-5",
+    "claude-4-6-sonnet": "claude-sonnet-4-6",
+    "claude-4-5-sonnet": "claude-sonnet-4-5",
+    "claude-4-opus": "claude-opus-4",
+    "claude-4-sonnet": "claude-sonnet-4",
+    "claude-4-haiku": "claude-haiku-4",
+    "mistral-large-latest": "mistral-large",
+    "mistral-small-latest": "mistral-small",
+    "codestral-latest": "codestral-2506",
+    "codestral": "codestral-2506",
+    "mistral-small-24b": "mistral-small"
+  },
+  "provider_aliases": {
+    "mistral": {
+      "open-mistral-nemo": "mistral-nemo",
+      "mistral-medium-3.5": "mistral-3.5-medium",
+      "mistral-medium-3.1": "mistral-3.1-medium",
+      "mistral-large-3": "mistral-3-large",
+      "codestral-latest": "codestral"
+    },
+    "qwen": {
+      "qwen-2.5": "qwen2.5",
+      "qwen-3": "qwen3"
+    },
+    "glm": {
+      "glm-5p2": "glm-5.2"
+    }
+  },
+  "display_aliases": {
+    "gpt-4o": "GPT-4o",
+    "gpt-4o-mini": "GPT-4o Mini",
+    "gpt-4-turbo": "GPT-4 Turbo",
+    "gpt-3.5-turbo": "GPT-3.5 Turbo",
+    "deepseek-chat": "DeepSeek V3 (Chat)",
+    "deepseek-reasoner": "DeepSeek R1 (Reasoner)",
+    "deepseek-r1": "DeepSeek R1",
+    "deepseek-v3": "DeepSeek V3",
+    "codestral": "Codestral",
+    "mistral-nemo": "Mistral Nemo",
+    "mistral-large": "Mistral Large",
+    "mistral-medium": "Mistral Medium",
+    "mistral-small": "Mistral Small",
+    "ministral-3b": "Ministral 3B",
+    "ministral-8b": "Ministral 8B",
+    "ministral-14b": "Ministral 14B",
+    "glm-5.2": "GLM 5.2"
+  }
+}

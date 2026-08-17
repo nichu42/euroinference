@@ -1,0 +1,84 @@
+{
+  "models": {
+    "glm-5.2": {
+      "display_name": "GLM 5.2",
+      "creator": "Zhipu AI",
+      "providers": {
+        "mistral": {
+          "slugs": ["glm-5-2", "zai-glm-5-2"],
+          "pricing_names": ["glm 5.2", "z.ai glm 5.2"]
+        }
+      }
+    },
+    "mistral-large": {
+      "display_name": "Mistral Large",
+      "creator": "Mistral AI",
+      "providers": {
+        "mistral": {
+          "slugs": ["mistral-large-latest", "mistral-large-3"],
+          "pricing_names": ["mistral large", "mistral large 3"]
+        }
+      }
+    },
+    "mistral-medium": {
+      "display_name": "Mistral Medium",
+      "creator": "Mistral AI",
+      "providers": {
+        "mistral": {
+          "slugs": ["mistral-medium-latest", "mistral-medium-3.5", "mistral-medium-3-5"],
+          "pricing_names": ["mistral medium 3.5"]
+        }
+      }
+    },
+    "mistral-small": {
+      "display_name": "Mistral Small",
+      "creator": "Mistral AI",
+      "providers": {
+        "mistral": {
+          "slugs": ["mistral-small-latest", "mistral-small-4"],
+          "pricing_names": ["mistral small", "mistral small 4"]
+        }
+      }
+    },
+    "ministral-3b": {
+      "display_name": "Ministral 3B",
+      "creator": "Mistral AI",
+      "providers": {
+        "mistral": {
+          "slugs": ["ministral-3b-latest", "ministral-3b-2512"],
+          "pricing_names": ["ministral 3 3b", "ministral 3b"]
+        }
+      }
+    },
+    "ministral-8b": {
+      "display_name": "Ministral 8B",
+      "creator": "Mistral AI",
+      "providers": {
+        "mistral": {
+          "slugs": ["ministral-8b-latest", "ministral-8b-2512"],
+          "pricing_names": ["ministral 3 8b", "ministral 8b"]
+        }
+      }
+    },
+    "ministral-14b": {
+      "display_name": "Ministral 14B",
+      "creator": "Mistral AI",
+      "providers": {
+        "mistral": {
+          "slugs": ["ministral-14b-latest", "ministral-14b-2512"],
+          "pricing_names": ["ministral 3 14b", "ministral 14b"]
+        }
+      }
+    },
+    "codestral": {
+      "display_name": "Codestral",
+      "creator": "Mistral AI",
+      "providers": {
+        "mistral": {
+          "slugs": ["codestral-latest", "codestral-2508"],
+          "pricing_names": ["codestral"]
+        }
+      }
+    }
+  }
+}
