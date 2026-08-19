@@ -1,6 +1,15 @@
 name: Update Model Data Cache
 
 on:
+  push:
+    branches: [ main ]
+    # Only regenerate data when something that affects the generated data.js changed
+    # (normalization rules, model registry, the generator script, or the workflow itself).
+    paths:
+      - 'config/**'
+      - 'scripts/**'
+      - 'data.js'
+      - '.github/workflows/**'
   schedule:
     # Run twice a day (at 00:00 and 12:00 UTC)
     - cron: '0 */12 * * *'
@@ -13,6 +22,8 @@ permissions:
 jobs:
   update-cache:
     runs-on: ubuntu-latest
+    # Skip when this push is the bot's own auto-update commit, to avoid re-triggering in a loop.
+    if: ${{ !(github.event_name == 'push' && github.event.head_commit.message == 'Auto-update model data and exchange rates [skip ci]') }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5
