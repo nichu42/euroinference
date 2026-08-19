@@ -46,7 +46,18 @@
     "mistral-small-latest": "mistral-small",
     "codestral-latest": "codestral-2506",
     "codestral": "codestral-2506",
-    "mistral-small-24b": "mistral-small"
+    "mistral-small-24b": "mistral-small",
+    "zai-glm-4.7": "glm-4.7",
+    "zai.glm-4.7": "glm-4.7",
+    "nemotron-super-3-120b": "nemotron-3-super-120b-a12b",
+    "nemotron-nano-3-30b": "nemotron-3-nano-30b-a3b",
+    "nemotron-nano-12b": "nemotron-nano-v2-12b",
+    "nemotron-3-ultra": "nemotron-3-ultra-550b-a55b",
+    "nemotron-lightning-3.5-30b-a3b": "nemotron-3.5-lightning-30b-a3b",
+    "nemotron-content-safety-3.5": "nemotron-3.5-content-safety",
+    "nemotron-3.5-lightning": "nemotron-3.5-lightning-30b-a3b",
+    "nemotron-3-nano-omni-30b-a3b-reasoning": "nemotron-3-nano-omni",
+    "nemotron-3-ultra-550b-a55b-bf16": "nemotron-3-ultra-550b-a55b"
   },
   "provider_aliases": {
     "mistral": {

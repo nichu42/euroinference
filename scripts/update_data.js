@@ -81,9 +81,21 @@ function resolveRegistryModelId(provider, rawId) {
 function normalizeModelId(id) {
   let clean = String(id || '').toLowerCase();
   clean = clean.replace(/@[a-z0-9_-]+$/i, '').split('/').pop().split(':')[0];
+  // Amazon Bedrock keeps the family as a vendor prefix: deepseek.v3.2 -> deepseek-v3.2 (not v3.2)
+  clean = clean.replace(/^deepseek\./i, 'deepseek-');
+  // Strip vendor dot prefixes (Amazon Bedrock <vendor>.<model> convention)
+  clean = clean.replace(/^(anthropic|openai|google|meta|cohere|mistral|amazon|ibm|alibaba|zhipu|moonshot|moonshotai|microsoft|snowflake|deepseek|ai21|writer|qwen|zai|nvidia|minimax)\./i, '');
+  // Strip leading Zai/Zhipu vendor hyphen/underscore prefixes (e.g. zai-glm-4.7 -> glm-4.7)
+  clean = clean.replace(/^(zai|zhipu)[-_]/i, '');
+  // Strip host hyphen prefixes (mirror of the runtime normalizer)
+  clean = clean.replace(/^(databricks|vertex|bedrock|azure|deepinfra|novita|together|cloudflare|anyscale|replicate|amazon|aws|nvidia)-/i, '');
   clean = clean.replace(/-(eu|us|global)$/i, '');
   clean = clean.replace(/-\d{4}-\d{2}-\d{2}$/, '').replace(/-\d{8}$/, '');
   clean = clean.replace(/-v\d+$/, '');
+  // Normalize Llama family boundary (llama3.1-70b-instruct -> llama-3.1-70b-instruct) before version normalization
+  clean = clean.replace(/^llama(\d)/, 'llama-$1');
+  // Normalize underscore version separators (nemotron-3_5-lightning -> nemotron-3.5-lightning, llama-3_1-* -> llama-3.1-*)
+  clean = clean.replace(/(\d+)_(\d+)/g, '$1.$2');
   return clean;
 }
 

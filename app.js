@@ -189,10 +189,14 @@ function getCleanModelId(id) {
     clean = clean.split(':')[0];
   }
   
-  // Strip vendor dot prefixes
-  clean = clean.replace(/^(anthropic|openai|google|meta|cohere|mistral|amazon|ibm|alibaba|zhipu|moonshot|moonshotai|microsoft|snowflake|deepseek|ai21|writer|qwen|zai)\./i, '');
+  // Amazon Bedrock keeps the family as a vendor prefix: deepseek.v3.2 -> deepseek-v3.2 (not v3.2)
+  clean = clean.replace(/^deepseek\./i, 'deepseek-');
+  // Strip vendor dot prefixes (Amazon Bedrock <vendor>.<model> convention)
+  clean = clean.replace(/^(anthropic|openai|google|meta|cohere|mistral|amazon|ibm|alibaba|zhipu|moonshot|moonshotai|microsoft|snowflake|deepseek|ai21|writer|qwen|zai|nvidia|minimax)\./i, '');
+  // Strip leading Zai/Zhipu vendor hyphen/underscore prefixes (e.g. zai-glm-4.7 -> glm-4.7)
+  clean = clean.replace(/^(zai|zhipu)[-_]/i, '');
   // Strip host hyphen prefixes
-  clean = clean.replace(/^(databricks|vertex|bedrock|azure|deepinfra|novita|together|cloudflare|anyscale|replicate|amazon|aws)-/i, '');
+  clean = clean.replace(/^(databricks|vertex|bedrock|azure|deepinfra|novita|together|cloudflare|anyscale|replicate|amazon|aws|nvidia|meta)-/i, '');
   // Strip trailing region suffix like -eu, -us, -global
   clean = clean.replace(/-(eu|us|global)$/i, '');
   // Strip -v1, -v2
@@ -204,9 +208,15 @@ function getCleanModelId(id) {
   // Strip 4-digit date suffixes on models with base version (e.g. gpt-4-0613, gpt-3.5-turbo-0125, mistral-large-2402)
   clean = clean.replace(/(gpt-4|gpt-3\.5-turbo|mistral-large|mistral-small|pixtral-large)-(\d{4})$/, '$1');
   
+  // Normalize Llama family boundary (llama3.1-70b-instruct -> llama-3.1-70b-instruct) before version normalization
+  clean = clean.replace(/^llama(\d)/, 'llama-$1');
+
   // Normalize hyphenated decimal versions (gpt-5-5-pro -> gpt-5.5-pro, jamba-1-5 -> jamba-1.5, mistral-medium-3-5 -> mistral-medium-3.5)
   // ONLY if not followed by b/t (e.g. 70b, 2.4t)
   clean = clean.replace(/(^|[a-z]-)(\d+)-(\d+)(?![bBtT\d])/g, '$1$2.$3');
+
+  // Normalize underscore version separators (nemotron-3_5-lightning -> nemotron-3.5-lightning, llama-3_1-* -> llama-3.1-*)
+  clean = clean.replace(/(\d+)_(\d+)/g, '$1.$2');
 
   // Normalize Claude aliases uniformly to: claude-[version]-[tier][modifier]
   clean = clean.replace(/^claude-(opus|sonnet|haiku|fable)-(\d+(?:\.\d+)?)(.*)$/, 'claude-$2-$1$3');
@@ -231,9 +241,10 @@ function getCleanModelId(id) {
 }
 
 function getGeneratedCanonicalId(rawModel) {
-  return rawModel && typeof rawModel.canonical_id === 'string' && rawModel.canonical_id
+  const canonical = rawModel && typeof rawModel.canonical_id === 'string' && rawModel.canonical_id
     ? rawModel.canonical_id
-    : getCleanModelId(rawModel && rawModel.id);
+    : rawModel && rawModel.id;
+  return getCleanModelId(canonical);
 }
 
 function normalizeSlug(slug) {
@@ -858,10 +869,19 @@ function processAndUnifyModels() {
   if (!Array.isArray(requestyModels)) requestyModels = [];
 
   const groups = []; // Array of grouped canonical models
+  const canonicalRawIds = new Map(); // canonicalId -> Map(providerId -> Set(raw ID))
+
+  function recordRawId(canonicalId, providerId, rawId) {
+    if (!rawId) return;
+    if (!canonicalRawIds.has(canonicalId)) canonicalRawIds.set(canonicalId, new Map());
+    const byProvider = canonicalRawIds.get(canonicalId);
+    if (!byProvider.has(providerId)) byProvider.set(providerId, new Set());
+    byProvider.get(providerId).add(rawId);
+  }
   
-  function findGroup(id) {
-    const slug = normalizeSlug(id);
-    const cleanBaseId = getGeneratedCanonicalId({ id });
+  function findGroup(rawModel) {
+    const cleanBaseId = getGeneratedCanonicalId(rawModel);
+    const slug = normalizeSlug(rawModel.id);
     const digits = cleanBaseId.replace(/[^0-9]/g, '');
     const canonicalId = cleanBaseId;
     
@@ -879,7 +899,7 @@ function processAndUnifyModels() {
     const normalized = normalizeOffer(providerId, rawModel);
     if (!normalized) return;
 
-    let group = findGroup(rawModel.id);
+    let group = findGroup(rawModel);
     if (!group) {
       const cleanBaseId = getGeneratedCanonicalId(rawModel);
       const canonicalId = cleanBaseId;
@@ -898,6 +918,7 @@ function processAndUnifyModels() {
       : providerId;
     group.offers[offerKey] = rawModel;
     group.normalizedOffers[offerKey] = normalized;
+    recordRawId(group.canonicalId, offerKey, rawModel.id);
     
     if (providerId === 'cortecs' || group.creator === 'Other' || (normalized.creator && normalized.creator !== 'Other')) {
       group.creator = getModelCreator(group.canonicalId, normalized.creator);
@@ -981,7 +1002,10 @@ function processAndUnifyModels() {
       edenai: g.offers.edenai || null,
       opper: g.offers.opper || null,
       eurouter: g.offers.eurouter || null,
-      requesty: g.offers.requesty || null
+      requesty: g.offers.requesty || null,
+      alternateIdsByProvider: Object.fromEntries(
+        [...(canonicalRawIds.get(g.canonicalId) || new Map()).entries()].map(([pid, set]) => [pid, [...set].sort()])
+      )
     };
   }).filter(model => {
     return getInputCostPerMillion(model) !== null && getOutputCostPerMillion(model) !== null;
@@ -1304,8 +1328,9 @@ function applyFiltersAndRender() {
     
     switch (currentSortColumn) {
       case 'id':
-        valA = a.id;
-        valB = b.id;
+        // Sort by the name shown in the table, not the provider-specific ID.
+        valA = getHumanFriendlyName(a.id || '');
+        valB = getHumanFriendlyName(b.id || '');
         break;
       case 'creator':
         valA = a.creator;
@@ -1333,9 +1358,14 @@ function applyFiltersAndRender() {
     }
 
     if (typeof valA === 'string') {
-      return currentSortDirection === 'asc' 
-        ? valA.localeCompare(valB) 
-        : valB.localeCompare(valA);
+      const comparison = valA.localeCompare(valB, undefined, { sensitivity: 'base' });
+      if (comparison !== 0) {
+        return currentSortDirection === 'asc' ? comparison : -comparison;
+      }
+
+      // Keep models with identical display names deterministic.
+      const idComparison = String(a.id || '').localeCompare(String(b.id || ''), undefined, { sensitivity: 'base' });
+      return currentSortDirection === 'asc' ? idComparison : -idComparison;
     } else {
       return currentSortDirection === 'asc' 
         ? valA - valB 
@@ -1480,6 +1510,21 @@ function renderTable(models) {
 }
 
 // --- MODAL POPUP SPLIT DETAILS ---
+
+function escapeHtml(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// For display: drop region-pin routing suffixes (e.g. bedrock/claude-sonnet-4@eu-north-1 -> bedrock/claude-sonnet-4).
+// Region pins only affect which region the provider routes the call to; the base id is what matters for comparison.
+function displayModelId(rawId) {
+  return rawId ? String(rawId).replace(/@[a-z0-9_-]+$/i, '') : '';
+}
 
 window.openComparison = function(modelId) {
   const model = unifiedModels.find(m => m.id === modelId);
@@ -1695,6 +1740,22 @@ function openModalWithSelection(modelObj) {
     const offerMaxOut = off.normOffer.maxOutputTokens ? `${off.normOffer.maxOutputTokens.toLocaleString()} max out` : '';
     const limitsStr = [offerContext, offerMaxOut].filter(Boolean).join(' • ');
 
+    // Other raw IDs this provider lists for the same canonical model (region pins collapsed)
+    const providerAltIds = [...new Set(
+      ((modelObj.alternateIdsByProvider && modelObj.alternateIdsByProvider[off.providerId]) || [])
+        .map(displayModelId)
+        .filter(Boolean)
+        .filter(id => id !== displayModelId(off.normOffer.rawModelId))
+    )];
+    const sameModelIdsHtml = providerAltIds.length > 0
+      ? `<div style="margin-top: 6px;">
+          <span style="font-size:0.6rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 3px;">Same Model Listed As (${providerAltIds.length})</span>
+          <div style="display:flex; flex-wrap:wrap; gap:4px;">
+            ${providerAltIds.map(id => `<code style="font-family:var(--font-mono); font-size:0.66rem; color:#94a3b8; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); padding:1px 5px; border-radius:4px;">${escapeHtml(id)}</code>`).join('')}
+          </div>
+        </div>`
+      : '';
+
     return `
       <div class="modal-model-card" style="${cardStyle}">
         <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -1704,8 +1765,8 @@ function openModalWithSelection(modelObj) {
         <div>
           <span style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 4px;">API Model Slug</span>
           <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; justify-content:space-between; gap: 8px;">
-            <code style="font-family:var(--font-mono); font-size:0.75rem; color:#e2e8f0; word-break:break-all;">${off.normOffer.rawModelId}</code>
-            <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${off.normOffer.rawModelId}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; transition: color 0.15s;" title="Copy to clipboard">
+            <code style="font-family:var(--font-mono); font-size:0.75rem; color:#e2e8f0; word-break:break-all;">${displayModelId(off.normOffer.rawModelId)}</code>
+            <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${displayModelId(off.normOffer.rawModelId)}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; transition: color 0.15s;" title="Copy to clipboard">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             </button>
           </div>
@@ -1714,14 +1775,15 @@ function openModalWithSelection(modelObj) {
               <span style="font-size:0.6rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 3px;">Also Available As (Rolling Alias)</span>
               ${off.normOffer.alternateSlugs.map(alt => `
                 <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.015); border: 1px dashed rgba(255,255,255,0.1); padding: 3px 6px; border-radius: 5px; justify-content:space-between; gap: 6px; margin-bottom: 4px;">
-                  <code style="font-family:var(--font-mono); font-size:0.7rem; color:#94a3b8; word-break:break-all;">${alt.rawModelId}</code>
-                  <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${alt.rawModelId}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center;" title="Copy alias slug">
+                  <code style="font-family:var(--font-mono); font-size:0.7rem; color:#94a3b8; word-break:break-all;">${displayModelId(alt.rawModelId)}</code>
+                  <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${displayModelId(alt.rawModelId)}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center;" title="Copy alias slug">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
                 </div>
               `).join('')}
             </div>
           ` : ''}
+          ${sameModelIdsHtml}
         </div>
 
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
