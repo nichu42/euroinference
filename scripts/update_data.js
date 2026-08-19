@@ -305,11 +305,26 @@ function parseMistralCatalog(pricingHtml, pricingEurHtml, modelMap, apiModels = 
   parsePricingTable(pricingHtml, prices);
   parsePricingTable(pricingEurHtml, euroPrices);
 
+  function stripHtmlTags(value) {
+    let text = '';
+    let insideTag = false;
+    for (const character of String(value)) {
+      if (character === '<') {
+        insideTag = true;
+      } else if (character === '>') {
+        insideTag = false;
+      } else if (!insideTag) {
+        text += character;
+      }
+    }
+    return text;
+  }
+
   function parsePricingTable(html, target) {
     const rowPattern = /<tr[^>]*>(.*?)<\/tr>/gis;
     for (const rowMatch of html.matchAll(rowPattern)) {
       const cells = [...rowMatch[1].matchAll(/<td[^>]*>(.*?)<\/td>/gis)]
-        .map(match => match[1].replace(/<[^>]+>/g, '').replace(/&[^;]+;/g, '').trim());
+        .map(match => stripHtmlTags(match[1]).replace(/&[^;]+;/g, '').trim());
       if (cells.length < 4) continue;
       const name = cells[0].replace(/↗/g, '').trim().toLowerCase();
       const input = Number(cells[1].replace(/[^\d.]/g, ''));
