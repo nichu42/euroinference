@@ -184,11 +184,13 @@
   --text-main: #10203d;
   --text-muted: #334155;
   --text-dark: #475569;
-  --savings-color: #9a6700;
-  --eu-yellow: #9a6700;
-  --eu-yellow-bright: #9a6700;
-  --eu-yellow-gold: #855900;
-  --eu-yellow-glow: rgba(154, 103, 0, 0.22);
+  --savings-color: #0284c7;
+  --savings-glow: rgba(2, 132, 199, 0.25);
+  --savings-bg: rgba(2, 132, 199, 0.10);
+  --eu-yellow: #0284c7;
+  --eu-yellow-bright: #0ea5e9;
+  --eu-yellow-gold: #075985;
+  --eu-yellow-glow: rgba(2, 132, 199, 0.22);
 }
 
 :root[data-theme="light"] .brand-title,
@@ -268,7 +270,7 @@
 :root[data-theme="light"] .footer-link,
 :root[data-theme="light"] .sponsor-link,
 :root[data-theme="light"] .disclaimer-pill {
-  color: #8a5b00 !important;
+  color: #0369a1 !important;
 }
 
 :root[data-theme="light"] .last-updated-text #last-updated-display {
@@ -286,6 +288,31 @@
 :root[data-theme="light"] .header-filter-select {
   color: var(--text-main) !important;
   background: #ffffff;
+}
+
+:root[data-theme="light"] .cache-chip {
+  background: #ffffff;
+  color: #526b88;
+}
+:root[data-theme="light"] .cache-chip:hover:not(:disabled) {
+  color: var(--text-main);
+}
+:root[data-theme="light"] .cache-reuse-field select {
+  background: #ffffff;
+  color: var(--text-main);
+}
+:root[data-theme="light"] .cache-reuse-field select option {
+  background: #ffffff;
+  color: var(--text-main);
+}
+:root[data-theme="light"] .cache-math-explainer code {
+  background: rgba(15, 23, 42, 0.05);
+  border-color: rgba(15, 23, 42, 0.1);
+  color: #243b5a;
+}
+:root[data-theme="light"] .th-cache-toggle:hover,
+:root[data-theme="light"] .cache-only-option:hover {
+  color: var(--text-main);
 }
 
 :root[data-theme="light"] .modal-header {
@@ -316,8 +343,13 @@
 }
 
 :root[data-theme="light"] .disclaimer-pill {
-  background: rgba(154, 103, 0, 0.08);
-  border-color: rgba(154, 103, 0, 0.28);
+  background: rgba(2, 132, 199, 0.08);
+  border-color: rgba(2, 132, 199, 0.28);
+}
+
+:root[data-theme="light"] .disclaimer-pill:hover {
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(2, 132, 199, 0.4);
 }
 
 :root[data-theme="light"] .table-wrapper,
@@ -619,6 +651,56 @@ header {
 .brand-inference {
   font-weight: 400;
   opacity: 0.95;
+}
+
+/* Light theme: the dark-theme gradient's yellow tail (#FFCC00/#ffd633) and the dark
+   drop-shadow wash out on bright backgrounds. Light mode stays in the blue family
+   (no browned-out golds) with darker, readable stops. The image itself is unchanged. */
+:root[data-theme="light"] .brand-title {
+  background: linear-gradient(90deg, #1a5cd8 0%, #1d4ed8 40%, #0284c7 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  filter: drop-shadow(0 0 10px rgba(2, 132, 199, 0.12));
+}
+
+:root[data-theme="light"] .brand-logo-img {
+  box-shadow: 0 2px 10px rgba(16, 32, 61, 0.18);
+}
+
+:root[data-theme="light"] .brand-logo-link:hover .brand-logo-img {
+  box-shadow: 0 3px 14px rgba(16, 32, 61, 0.28);
+}
+
+/* --- Theme switch animation ----------------------------------------------
+   Chromium/Safari: circular wipe expanding from the theme-toggle button via the
+   View Transitions API (driven from app.js). Firefox: staggered fade-out of the
+   marked page sections, theme swap, staggered fade-in. Reduced motion: instant. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+[data-theme-step] {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+body.theme-fading-out [data-theme-step] {
+  opacity: 0;
+  transform: translateY(8px) scale(0.995);
+  transition-delay: calc(var(--theme-step, 0) * 45ms);
+}
+body.theme-fading-in [data-theme-step] {
+  transition-delay: calc(var(--theme-step, 0) * 45ms + 60ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
+  }
+  [data-theme-step] {
+    transition: none !important;
+  }
 }
 
 .subtitle-row {
@@ -1213,12 +1295,53 @@ header {
   border-radius: 16px;
   overflow: hidden;
   position: relative;
-  animation: slideIn var(--transition-normal);
 }
 
-@keyframes slideIn {
-  from { transform: translateY(20px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+/* Modal choreography: backdrop fade, panel pop, then overview + provider cards
+   cascading in (per-card stagger via --card-i), quick drop on close. Wrapped in
+   no-preference so reduced-motion users keep the instant swap. */
+@media (prefers-reduced-motion: no-preference) {
+  .overlay-panel.active {
+    animation: overlay-in var(--transition-normal) both;
+  }
+  .overlay-panel.closing {
+    animation: overlay-out 0.18s ease both;
+  }
+  .overlay-panel.active .compare-modal {
+    animation: modal-pop 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .overlay-panel.closing .compare-modal {
+    animation: modal-drop 0.18s ease both;
+  }
+  .overlay-panel.active .modal-overview-section {
+    animation: modal-rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: 0.08s;
+  }
+  .overlay-panel.active .modal-model-card {
+    animation: modal-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: calc(0.16s + var(--card-i, 0) * 70ms);
+  }
+}
+
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes modal-pop {
+  from { transform: translateY(26px) scale(0.96); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+@keyframes modal-drop {
+  from { transform: translateY(0) scale(1); opacity: 1; }
+  to { transform: translateY(16px) scale(0.97); opacity: 0; }
+}
+@keyframes modal-rise {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .modal-header {
@@ -1338,9 +1461,9 @@ header {
 }
 
 :root[data-theme="light"] .cap-badge-universal {
-  color: #8a5b00;
-  background: #fff7d6;
-  border-color: #e7bd4a;
+  color: #075985;
+  background: #e0f2fe;
+  border-color: #7dd3fc;
 }
 
 .cap-badge-partial {
@@ -1426,6 +1549,20 @@ header {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
+}
+
+/* Row-aligned shared blocks: every card reserves the same height for slug, cache
+   and limits sections so Input/Output, cache rates, limits and features line up
+   across provider cards for side-by-side comparison. Variable extras (aliases,
+   alt IDs, infra notes) are rendered below the shared blocks. */
+.modal-card-slug {
+  min-height: 50px;
+}
+.modal-card-cache {
+  min-height: 56px;
+}
+.modal-card-limits {
+  min-height: 32px;
 }
 
 .modal-model-card.mammouth {
@@ -1823,6 +1960,195 @@ table.models-table tr.clickable-row:hover td {
   margin-top: 1rem;
   padding-top: 0.9rem;
   border-top: 1px solid var(--border-color);
+}
+
+/* Prompt-caching assumptions inside the workload panel */
+.cache-settings {
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border-color);
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  min-width: 0;
+}
+.cache-settings legend {
+  padding: 0;
+  color: var(--text-dark);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.cache-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1.25rem;
+}
+.cache-share-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.cache-label {
+  font-weight: 600;
+  color: var(--text-dark);
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  margin-right: 0.25rem;
+}
+.cache-chip {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.cache-chip:hover:not(:disabled) {
+  border-color: var(--savings-color, #ffcc00);
+  color: #fff;
+}
+.cache-chip.active {
+  border-color: var(--savings-color, #ffcc00);
+  color: var(--savings-color, #ffcc00);
+  background: var(--savings-bg, rgba(255, 204, 0, 0.08));
+  font-weight: 700;
+}
+.cache-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.cache-chip:focus-visible {
+  outline: 1px solid var(--eu-yellow);
+  outline-offset: 2px;
+}
+.cache-reuse-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.cache-reuse-field select {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 4px 6px;
+  border-radius: 5px;
+  outline: none;
+  cursor: pointer;
+}
+.cache-reuse-field select:focus {
+  border-color: var(--savings-color, #10b981);
+}
+.cache-reuse-field select:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.cache-reuse-field select option {
+  background: #07102b;
+  color: #e2e8f0;
+}
+.cache-only-option {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cache-only-option input {
+  accent-color: var(--eu-yellow);
+  cursor: pointer;
+}
+.cache-only-option:hover {
+  color: #fff;
+}
+.cache-math-help {
+  margin-top: 0.65rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.cache-math-help summary {
+  cursor: pointer;
+  color: var(--eu-yellow);
+  font-size: 0.7rem;
+  width: fit-content;
+}
+.cache-math-help summary:focus-visible {
+  outline: 1px solid var(--eu-yellow);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.cache-math-explainer {
+  margin-top: 0.5rem;
+  line-height: 1.55;
+}
+.cache-math-explainer p {
+  margin: 0.35rem 0;
+}
+.cache-math-explainer ul {
+  margin: 0.3rem 0 0.3rem 1.1rem;
+  padding: 0;
+}
+.cache-math-explainer code {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #e2e8f0;
+}
+.cache-math-explainer a {
+  color: var(--eu-yellow);
+}
+.cache-adjusted-suffix {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--savings-color, #ffcc00);
+  white-space: nowrap;
+}
+.cache-adjusted-suffix[hidden] {
+  display: none;
+}
+.th-cache-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.th-cache-toggle input {
+  accent-color: var(--eu-yellow);
+  cursor: pointer;
+  margin: 0;
+}
+.th-cache-toggle:hover {
+  color: #fff;
+}
+.workload-active-hint {
+  margin-left: 8px;
+  color: var(--savings-color, #ffcc00);
+  font-weight: 700;
+  white-space: nowrap;
 }
 .cost-filter {
   min-width: 0;
@@ -2289,6 +2615,39 @@ table.models-table tr.clickable-row:hover td {
   text-decoration: none;
   font-weight: 600;
   transition: color var(--transition-fast), text-shadow var(--transition-fast);
+}
+
+/* "Hosted in the EU" sponsor badge — dark chip in dark theme, quiet card in light */
+.deploybase-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  background: #1e293b;
+  color: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1;
+  text-decoration: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.deploybase-badge:hover {
+  border-color: rgba(148, 163, 184, 0.45);
+}
+
+:root[data-theme="light"] .deploybase-badge {
+  background: #ffffff;
+  color: #334155;
+  border-color: var(--border-color);
+  box-shadow: 0 1px 4px rgba(30, 78, 121, 0.08);
+}
+:root[data-theme="light"] .deploybase-badge:hover {
+  border-color: #8db5df;
+  box-shadow: 0 2px 8px rgba(30, 78, 121, 0.14);
 }
 
 .footer-link:hover {

@@ -22,7 +22,7 @@
   <div class="container">
     <!-- Header -->
     <header>
-      <div class="header-main">
+      <div class="header-main" data-theme-step>
         <div class="logo-section">
           <a href="#" class="brand-logo-link">
             <img src="assets/logo_150px.webp" alt="EuroInference Logo" class="brand-logo-img">
@@ -54,7 +54,7 @@
         </div>
       </div>
 
-      <div class="subtitle-row">
+      <div class="subtitle-row" data-theme-step>
         <p>Compare models and pricing across European LLM providers</p>
         <div style="display:flex; align-items:center; gap:0.85rem;">
           <span class="last-updated-text">last updated: <span id="last-updated-display">...</span></span>
@@ -68,11 +68,11 @@
       <!-- Main Display Panel -->
       <main class="main-content">
         <!-- Workload Estimator -->
-        <section class="workload-panel" aria-label="Your workload inputs">
+        <section class="workload-panel" aria-label="Your workload inputs" data-theme-step>
           <details class="workload-settings">
             <summary class="workload-settings-summary">
               <span class="workload-settings-title">Workload assumptions &amp; price filters</span>
-              <span class="workload-settings-help">Adjust tokens per request and price ranges</span>
+              <span class="workload-settings-help">Adjust tokens, prompt-caching assumptions and price ranges<span id="workload-active-hint" class="workload-active-hint" hidden>caching filter on</span></span>
             </summary>
             <div class="workload-settings-content">
               <div class="workload-grid">
@@ -87,6 +87,34 @@
                   <span class="workload-suffix">tokens</span>
                 </label>
               </div>
+              <fieldset class="cache-settings" aria-label="Prompt caching assumptions">
+                <legend>Prompt caching</legend>
+                <div class="cache-controls">
+                  <div class="cache-share-group" role="group" aria-label="Assumed share of input tokens served from cache">
+                    <span class="cache-label">Cached input</span>
+                    <button type="button" class="cache-chip" data-share="0" aria-pressed="false" title="No cached input assumed (plain chat workloads)">Chat 0%</button>
+                    <button type="button" class="cache-chip" data-share="0.4" aria-pressed="false" title="40% of input tokens assumed cached (retrieval-style workloads)">RAG 40%</button>
+                    <button type="button" class="cache-chip" data-share="0.8" aria-pressed="false" title="80% of input tokens assumed cached (agentic coding workloads)">Agentic 80%</button>
+                  </div>
+                  <label class="cache-reuse-field" title="Average number of times each cached context is re-read before expiry; amortizes cache-write premiums">
+                    <span class="cache-label">Reuses</span>
+                    <select id="filter-cache-reuse">
+                      <option value="2">2×</option>
+                      <option value="4" selected>4×</option>
+                      <option value="8">8×</option>
+                      <option value="Infinity">Steady state (∞)</option>
+                    </select>
+                  </label>
+                  <label class="cache-only-option" title="Hide offers from providers without prompt-caching support or published cache rates. Non-caching offers are excluded from every column; models without any such offer disappear.">
+                    <input type="checkbox" id="filter-cache-only">
+                    <span>Only caching-capable providers</span>
+                  </label>
+                </div>
+                <details class="cache-math-help">
+                  <summary>How is this calculated?</summary>
+                  <div id="cache-math-explainer" class="cache-math-explainer"></div>
+                </details>
+              </fieldset>
               <div class="cost-filter-grid" aria-label="Cost range filters">
                 <fieldset class="cost-filter">
                   <legend>Input price</legend>
@@ -118,7 +146,7 @@
         </section>
 
         <!-- Explorer Table -->
-        <section>
+        <section data-theme-step>
           <div class="update-warning" id="update-warning" role="status" hidden></div>
           <div class="table-wrapper">
             <table class="models-table" id="models-explorer-table">
@@ -131,7 +159,7 @@
                   <th class="sortable" data-sort="context">Minimum Context Window <span class="sort-indicator"></span></th>
                   <th class="sortable" data-sort="input">Lowest Input Price / 1M <span class="sort-indicator"></span></th>
                   <th class="sortable" data-sort="output">Lowest Output Price / 1M <span class="sort-indicator"></span></th>
-                  <th class="sortable" data-sort="workload" id="workload-col-header" title="Total cost for a single request using your workload inputs and the cheapest offer. Edit inputs above the table.">Cost (your workload) <span class="sort-indicator"></span></th>
+                  <th class="sortable" data-sort="workload" id="workload-col-header" title="Total cost for a single request using your workload inputs and the cheapest offer. With 'prompt caching' checked below, cached input tokens are priced with blended cache rates (see methodology). Edit inputs above the table.">Cost (your workload) <span class="sort-indicator"></span><span id="cost-header-suffix" class="cache-adjusted-suffix" title="Cache-adjusted: includes your prompt-caching assumptions">cache-adjusted</span></th>
               <th>Lowest-Price Provider</th>
             </tr>
                 <!-- Inline Header Filters -->
@@ -166,7 +194,12 @@
                   </th>
                   <th></th>
                   <th></th>
-                  <th></th>
+                  <th>
+                    <label class="th-cache-toggle" title="Checked: the Cost column applies your prompt-caching assumptions (blended cache rates). Unchecked: plain listed input/output prices.">
+                      <input type="checkbox" id="filter-cache-aware" checked>
+                      <span>prompt caching</span>
+                    </label>
+                  </th>
                   <th></th>
                 </tr>
               </thead>
@@ -188,13 +221,13 @@
     </div>
 
     <!-- Footer Section -->
-    <footer class="site-footer" id="data-notice">
+    <footer class="site-footer" id="data-notice" data-theme-step>
       <div class="data-notice-card">
-        <div style="font-family:var(--font-title, sans-serif); font-size:0.8rem; font-weight:800; text-transform:uppercase; letter-spacing:0.06em; color:#FFCC00; margin-bottom:0.4rem;">
+        <div style="font-family:var(--font-title, sans-serif); font-size:0.8rem; font-weight:800; text-transform:uppercase; letter-spacing:0.06em; color:var(--savings-color); margin-bottom:0.4rem;">
           Important Notice & Non-Liability
         </div>
         <p>
-          EuroInference is an open-source, non-commercial informational tool designed for comparative benchmarking. Model identifiers, specifications, and listed rates are automatically aggregated and normalized from public third-party provider APIs and official European Central Bank (ECB) reference rates. All pricing figures represent net estimates excluding statutory Value Added Tax (VAT) and provider-specific billing surcharges. Converted figures reflect periodic ECB reference benchmarks rather than real-time transactional spot rates. While all information is maintained with reasonable care, data is provided on an 'as is' basis without representations, warranties, or liability beyond mandatory statutory limits. All product names, logos, and brands belong to their respective owners and do not constitute an endorsement or affiliation. Users must independently verify binding service level agreements, live rate sheets, token accounting methods, and quotas directly with each respective provider before deployment. Price comparisons do not assess overall suitability. Verify provider features, limits, latency, reliability, privacy, security, and service terms before deployment.
+          EuroInference is an open-source, non-commercial informational tool designed for comparative benchmarking. Model identifiers, specifications, and listed rates are automatically aggregated and normalized from public third-party provider APIs and official European Central Bank (ECB) reference rates. All pricing figures represent net estimates excluding statutory Value Added Tax (VAT) and provider-specific billing surcharges. Converted figures reflect periodic ECB reference benchmarks rather than real-time transactional spot rates. While all information is maintained with reasonable care, data is provided on an 'as is' basis without representations, warranties, or liability beyond mandatory statutory limits. All product names, logos, and brands belong to their respective owners and do not constitute an endorsement or affiliation. Users must independently verify binding service level agreements, live rate sheets, token accounting methods, and quotas directly with each respective provider before deployment. Price comparisons do not assess overall suitability. Cache-adjusted workload figures depend on user-selected assumptions (cached input share, reuse rounds) and published provider cache rates; offers without published rates are estimated at full input price. All formulas, fallback rules and calibration are documented in the <a href="methodology.html" class="footer-link">Cost &amp; Caching Methodology</a>. Verify provider features, limits, latency, reliability, privacy, security, and service terms before deployment.
         </p>
       </div>
 
@@ -209,9 +242,11 @@
           </a>
           <span aria-hidden="true" style="margin:0 0.55rem;opacity:0.55;">•</span>
           <a href="privacy.html" class="footer-link">Privacy / Impressum</a>
+          <span aria-hidden="true" style="margin:0 0.55rem;opacity:0.55;">•</span>
+          <a href="methodology.html" class="footer-link">Cost Methodology</a>
         </div>
         <div class="footer-right-col">
-          <a href="https://deploybase.eu" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid rgba(148,163,184,0.2);border-radius:8px;background:#1e293b;color:#f8fafc;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;line-height:1;text-decoration:none"><svg width="14" height="16" viewBox="0 0 34 40" aria-hidden="true"><path d="M17 0 L34 10 L17 20 L0 10Z" fill="#a5b4fc"/><path d="M0 10 L17 20 L17 40 L0 30Z" fill="#6366f1"/><path d="M17 20 L34 10 L34 30 L17 40Z" fill="#3730a3"/></svg><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#34d399"></span>Hosted in the EU</a>
+          <a href="https://deploybase.eu" rel="noopener" class="deploybase-badge"><svg width="14" height="16" viewBox="0 0 34 40" aria-hidden="true"><path d="M17 0 L34 10 L17 20 L0 10Z" fill="#a5b4fc"/><path d="M0 10 L17 20 L17 40 L0 30Z" fill="#6366f1"/><path d="M17 20 L34 10 L34 30 L17 40Z" fill="#3730a3"/></svg><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#34d399"></span>Hosted in the EU</a>
         </div>
       </div>
     </footer>

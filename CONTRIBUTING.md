@@ -59,8 +59,15 @@ When changing the updater:
 - Validate provider response shapes before serialization.
 - Keep retries bounded and surface failures through `UPDATE_STATUS`.
 - Do not preserve stale provider records after a failed refresh.
-- Keep the generated field allowlist aligned with the fields read by `app.js`.
+- Keep the generated field allowlist aligned with the fields read by `app.js`, including the optional cache-rate fields.
 - Do not log API keys or private response data.
+
+Cache-rate conventions (mirroring the unknown-context rule):
+
+- Never fabricate cache rates. Invalid, zero, or non-positive values are dropped during generation; zero means "not offered", never "free".
+- Unknown caching support stays visible and is treated as unknown, not as unsupported.
+- Capture Mistral's "Cached input" pricing column in both currencies; regional duplicates keep the documented 1.1x premium on cached rates.
+- Keep the caching formula single-sourced in `app.js` constants and mirrored in [`METHODOLOGY.md`](METHODOLOGY.md).
 
 ## Pull requests
 
@@ -72,6 +79,7 @@ Before submitting:
 - Run `node --check scripts/update_data.js`.
 - Run `node --check data.js` when the generated cache changes.
 - Run `node scripts/build_privacy.js` when `PRIVACY.md` changes.
+- Run `node scripts/build_methodology.js` and re-verify the worked examples against app output when pricing or caching logic changes.
 - Run `git diff --check`.
 - Inspect generated `data.js` changes separately from source and configuration changes.
 - Update relevant documentation when behavior, provider coverage, data sources, or privacy/security claims change.

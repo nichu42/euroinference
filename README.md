@@ -46,6 +46,7 @@ EuroInference is a static, browser-based comparison dashboard for people evaluat
 - Switch between EUR and USD views using the generated Frankfurter/ECB reference rate.
 - Search and filter by model, creator, provider, minimum context window, input price, and output price.
 - Estimate the cost of a representative workload with configurable input and output token counts.
+- Model prompt-caching economics in the workload estimate with configurable cached-input share and reuse assumptions; filter for caching-capable providers ([methodology](METHODOLOGY.md)).
 - Inspect provider offers, context limits, capabilities, modalities, regions, and additional model metadata.
 - Keep the page fast and predictable by shipping a generated `data.js` cache instead of querying provider APIs at page load.
 - Show an update warning when a provider refresh failed instead of silently presenting stale records as current.
@@ -147,6 +148,12 @@ git diff --check
 
 If you change provider data or normalization rules, also run `node scripts/update_data.js` with the appropriate local credentials and inspect the generated diff.
 
+If you change pricing or caching logic, regenerate the methodology page and verify the worked examples against the app:
+
+```powershell
+node scripts/build_methodology.js
+```
+
 ## Contributing
 
 Bug reports, documentation improvements, configuration fixes, and focused code changes are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) first.
@@ -169,6 +176,8 @@ The dashboard has no account system, analytics, advertising, telemetry, or appli
 ```powershell
 node scripts/build_privacy.js
 ```
+
+The [Cost & Caching Methodology](METHODOLOGY.md) documents every price and cache calculation, the per-provider data mapping, fallback rules for missing cache rates, and the calibration of the default caching assumptions. The hosted page is [`methodology.html`](methodology.html), generated from `METHODOLOGY.md` via `scripts/build_methodology.js`.
 
 ## Credits and license
 

@@ -28,6 +28,30 @@ let selectedTag = 'all'; // 'all' or specific capability tag
 let minContextSize = 32000;
 let workloadInputTokens = 10000;
 let workloadOutputTokens = 1000;
+
+// Prompt-caching assumptions behind the "Cost (your workload)" column.
+// cacheAwareCost toggles the blended formula on/off; cachedInputShare is the assumed
+// share of input tokens served from cache; cacheReuseRounds (R) amortizes write
+// premiums across the average number of times a cached context is re-read.
+let cacheAwareCost = true;
+let cachedInputShare = 0.8; // Agentic preset
+let cacheReuseRounds = 4;
+let onlyCachingProviders = false; // visibility filter: hide offers without caching support
+
+// Single source of truth for every cache-math explanation rendered in the UI.
+const CACHE_FORMULA_TEXT = 'p_eff = base·(1−s) + (s/R)·[w + (R−1)·r]';
+const CACHE_FORMULA_RULES = [
+  'No published write rate → writes are billed at full input price (w = base).',
+  'No published read rate (or read ≥ base price) → cached tokens are billed at full input price.',
+  'Unknown caching support never counts as a discount — only published rates reduce the estimate.'
+];
+const CACHE_SHARE_PRESETS = [
+  { label: 'Chat', share: 0 },
+  { label: 'RAG', share: 40 },
+  { label: 'Agentic', share: 80 }
+];
+const DEFAULT_CACHE_REUSE_ROUNDS = 4;
+
 const COST_SLIDER_STEPS = 1000;
 const COST_LOG_MIN = 0.0001;
 let costFilterRanges = {
@@ -97,6 +121,7 @@ async function init() {
   configureCostFilters();
   setupUIEventListeners();
   renderCreatorsFilter();
+  updateCacheControls();
   applyFiltersAndRender();
 }
 
@@ -730,15 +755,16 @@ function normalizeOffer(providerId, rawModel) {
     capabilityObject.structured_output
   ));
 
-  // Prompt Caching
-  const hasCaching = 
-    (providerId === 'cortecs' && rawModel.pricing && (rawModel.pricing.cache_read_cost > 0 || rawModel.pricing.cache_write_cost > 0)) ||
-    (providerId === 'requesty' && (rawModel.supports_caching || (rawModel.cached_price > 0)));
-  recordCapability('Prompt Caching', hasCaching, explicitlyFalse(
-    rawModel.supports_caching,
-    capabilityObject.caching,
-    capabilityObject.prompt_caching
-  ));
+  // Prompt Caching — tri-state via published rates or explicit provider flags
+  const cachingState = getOfferCacheSupport(effectiveProviderId, rawModel);
+  recordCapability('Prompt Caching',
+    cachingState === 'priced' || cachingState === 'flagged',
+    explicitlyFalse(
+      rawModel.supports_caching,
+      capabilityObject.caching,
+      capabilityObject.prompt_caching
+    ) || cachingState === 'unsupported'
+  );
 
   // 4. Description extraction
   const description = rawModel.description && typeof rawModel.description === 'string' && rawModel.description.trim() ? rawModel.description.trim() : null;
@@ -1118,25 +1144,129 @@ function getOfferOutputCost(providerId, offer, currency = selectedCurrency) {
   return null;
 }
 
-function getOfferCacheReadCost(providerId, offer, currency = selectedCurrency) {
-  if (!offer) return null;
+function positiveRate(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+// USD per-token rates (Requesty/Eden AI convention) normalized to per-1M.
+function usdPerTokenToPerMillion(value) {
+  const rate = positiveRate(value);
+  return rate === null ? null : rate * 1000000;
+}
+
+// Convert a per-1M native-currency rate into the display currency.
+function convertPerMillionRate(value, nativeCurrency, currency) {
+  if (value === null || nativeCurrency === currency) return value;
+  // exchangeRate is USD per EUR (ECB reference from data.js)
+  return nativeCurrency === 'EUR' ? value * exchangeRate : value / exchangeRate;
+}
+
+// Published prompt-cache rates for a single offer, normalized to the selected
+// currency, per 1M tokens. `read` is only returned when it is a genuine discount
+// (finite, > 0 and strictly below the base input rate); zero/absent means "not
+// offered", never "free". `write` is any published write premium as-is.
+function getOfferCacheRates(providerId, offer, currency = selectedCurrency) {
+  const empty = { read: null, write: null };
+  if (!offer) return empty;
+
+  let read = null;
+  let write = null;
+
   if (providerId === 'cortecs') {
-    if (offer.pricing && typeof offer.pricing.cache_read_cost === 'number' && offer.pricing.cache_read_cost > 0) {
-      const pEur = offer.pricing.cache_read_cost;
-      return currency === 'EUR' ? pEur : pEur * exchangeRate;
-    }
+    read = convertPerMillionRate(positiveRate(offer.pricing?.cache_read_cost), 'EUR', currency);
+    write = convertPerMillionRate(positiveRate(offer.pricing?.cache_write_cost), 'EUR', currency);
+  } else if (providerId === 'mistral') {
+    read = currency === 'EUR'
+      ? positiveRate(offer.pricing?.cached_input_token_eur)
+      : positiveRate(offer.pricing?.cached_input_token);
+  } else if (providerId === 'edenai') {
+    read = usdPerTokenToPerMillion(offer.pricing?.cache_read_input_token_cost)
+      ?? usdPerTokenToPerMillion(offer.pricing?.input_cost_per_token_cache_hit);
+    write = usdPerTokenToPerMillion(offer.pricing?.cache_creation_input_token_cost);
+    read = convertPerMillionRate(read, 'USD', currency);
+    write = convertPerMillionRate(write, 'USD', currency);
+  } else if (providerId === 'opper') {
+    read = positiveRate(Array.isArray(offer.pricing?.cached_input) ? offer.pricing.cached_input[0] : undefined);
+    write = positiveRate(Array.isArray(offer.pricing?.cache_creation) ? offer.pricing.cache_creation[0] : undefined);
+    read = convertPerMillionRate(read, 'USD', currency);
+    write = convertPerMillionRate(write, 'USD', currency);
+  } else if (providerId === 'eurouter') {
+    const origCur = offer.pricing?.currency || 'EUR';
+    const rawRead = parseFloat(offer.pricing?.input_cache_read);
+    const rawWrite = parseFloat(offer.pricing?.input_cache_write);
+    read = Number.isFinite(rawRead) && rawRead > 0 ? rawRead * 1000000 : null;
+    write = Number.isFinite(rawWrite) && rawWrite > 0 ? rawWrite * 1000000 : null;
+    read = convertPerMillionRate(read, origCur, currency);
+    write = convertPerMillionRate(write, origCur, currency);
   } else if (providerId === 'requesty') {
-    if (typeof offer.cached_price === 'number' && offer.cached_price > 0) {
-      const pUsd = offer.cached_price * 1000000;
-      return currency === 'USD' ? pUsd : pUsd / exchangeRate;
-    }
+    read = convertPerMillionRate(usdPerTokenToPerMillion(offer.cached_price), 'USD', currency);
+    write = convertPerMillionRate(usdPerTokenToPerMillion(offer.caching_price), 'USD', currency);
   }
-  return null;
+
+  const baseIn = getOfferInputCost(providerId, offer, currency);
+  if (read !== null && baseIn !== null && read >= baseIn) read = null;
+  return { read, write };
+}
+
+// Tri-state caching support for one offer:
+//   'priced'      — a published cache rate exists
+//   'flagged'     — provider explicitly reports caching support without a published rate
+//   'unsupported' — provider explicitly reports no caching support
+//   'unknown'     — no signal in either direction
+function getOfferCacheSupport(providerId, offer) {
+  if (!offer) return 'unknown';
+  const { read, write } = getOfferCacheRates(providerId, offer);
+  if (read !== null || write !== null) return 'priced';
+  if (providerId === 'requesty') {
+    if (offer.supports_caching === true) return 'flagged';
+    if (offer.supports_caching === false) return 'unsupported';
+  }
+  if (providerId === 'edenai' && offer.capabilities) {
+    if (offer.capabilities.supports_prompt_caching === true) return 'flagged';
+    if (offer.capabilities.supports_prompt_caching === false) return 'unsupported';
+  }
+  return 'unknown';
+}
+
+// Legacy single-value accessor (kept for modal/display call sites).
+function getOfferCacheReadCost(providerId, offer, currency = selectedCurrency) {
+  return getOfferCacheRates(providerId, offer, currency).read;
+}
+
+// Effective blended input rate for one offer under the current cache assumptions:
+//   p_eff = base·(1−s) + (s/R)·[w + (R−1)·r]
+// with w → base when no write rate is published and r → base when no usable read
+// rate is published. At s = 0 (or with caching math disabled) this equals base.
+function getOfferEffectiveInputCost(providerId, offer, currency = selectedCurrency) {
+  const baseIn = getOfferInputCost(providerId, offer, currency);
+  if (baseIn === null) return null;
+  if (!cacheAwareCost || cachedInputShare <= 0) return baseIn;
+  const share = Math.min(Math.max(cachedInputShare, 0), 1);
+  const rounds = cacheReuseRounds >= 1 ? cacheReuseRounds : DEFAULT_CACHE_REUSE_ROUNDS;
+  const { read, write } = getOfferCacheRates(providerId, offer, currency);
+  const readRate = read !== null ? read : baseIn;
+  const writeRate = write !== null ? write : baseIn;
+  const amortizedCachedRate = Number.isFinite(rounds)
+    ? (writeRate + (rounds - 1) * readRate) / rounds
+    : readRate; // steady state: write premium fully amortized
+  return baseIn * (1 - share) + share * amortizedCachedRate;
+}
+
+// Offers considered under the current visibility filter. With "only caching-capable
+// providers" enabled, offers without caching support are excluded from every column.
+function getActiveOffers(modelObj) {
+  const entries = Object.entries(modelObj.offers);
+  if (!onlyCachingProviders) return entries;
+  return entries.filter(([providerKey, offer]) => {
+    const providerId = providerKey === 'mistral-regional' ? 'mistral' : providerKey;
+    const state = getOfferCacheSupport(providerId, offer);
+    return state === 'priced' || state === 'flagged';
+  });
 }
 
 function getInputCostPerMillion(modelObj, currency = selectedCurrency) {
   const activeOffers = [];
-  for (const [providerId, offer] of Object.entries(modelObj.offers)) {
+  for (const [providerId, offer] of getActiveOffers(modelObj)) {
     const cost = getOfferInputCost(providerId, offer, currency);
     if (cost !== null) activeOffers.push(cost);
   }
@@ -1145,26 +1275,40 @@ function getInputCostPerMillion(modelObj, currency = selectedCurrency) {
 
 function getOutputCostPerMillion(modelObj, currency = selectedCurrency) {
   const activeOffers = [];
-  for (const [providerId, offer] of Object.entries(modelObj.offers)) {
+  for (const [providerId, offer] of getActiveOffers(modelObj)) {
     const cost = getOfferOutputCost(providerId, offer, currency);
     if (cost !== null) activeOffers.push(cost);
   }
   return activeOffers.length > 0 ? Math.min(...activeOffers) : null;
 }
 
-// Total cost for a representative workload using the model's best offer.
+// Total workload cost for the cheapest complete offer. Rates are never mixed across
+// offers: input, output and cache rates of one provider are evaluated together.
+function getBestWorkloadOffer(modelObj, currency = selectedCurrency) {
+  let best = null;
+  for (const [providerId, offer] of getActiveOffers(modelObj)) {
+    const inEff = getOfferEffectiveInputCost(providerId, offer, currency);
+    const outRate = getOfferOutputCost(providerId, offer, currency);
+    if (inEff === null || outRate === null) continue;
+    const total = (inEff * workloadInputTokens + outRate * workloadOutputTokens) / 1000000;
+    if (best === null || total < best.total) {
+      best = { providerId, offer, inEff, outRate, total };
+    }
+  }
+  return best;
+}
+
 function getWorkloadCost(modelObj, currency = selectedCurrency) {
-  const inCost = getInputCostPerMillion(modelObj, currency);
-  const outCost = getOutputCostPerMillion(modelObj, currency);
-  if (inCost === null || outCost === null) return null;
-  if (inCost === 0 || outCost === 0) return 0;
-  return (inCost * workloadInputTokens + outCost * workloadOutputTokens) / 1000000;
+  const best = getBestWorkloadOffer(modelObj, currency);
+  return best ? best.total : null;
 }
 
 function getBestProviderDetails(modelObj, currency = selectedCurrency) {
   const activeOffers = [];
-  for (const [providerId, offer] of Object.entries(modelObj.offers)) {
-    const inCost = getOfferInputCost(providerId, offer, currency);
+  for (const [providerId, offer] of getActiveOffers(modelObj)) {
+    // Same per-offer basis as the workload column so the "Lowest-Price Provider"
+    // ranking stays consistent with the cost figure (cache-adjusted when enabled).
+    const inCost = getOfferEffectiveInputCost(providerId, offer, currency);
     const outCost = getOfferOutputCost(providerId, offer, currency);
     if (inCost !== null && outCost !== null) {
       activeOffers.push({
@@ -1260,7 +1404,7 @@ function configureCostFilters() {
 }
 
 function getContextRange(modelObj) {
-  const offerIds = Object.keys(modelObj.normalizedOffers || {});
+  const offerIds = getActiveOffers(modelObj).map(([providerId]) => providerId);
   const selectedOfferIds = selectedProvider.length === 0
     ? offerIds
     : offerIds.filter(providerId => selectedProvider.includes(providerId) || (selectedProvider.includes('matched') && modelObj.matched));
@@ -1384,6 +1528,60 @@ function applyFiltersAndRender() {
   renderTable(filtered);
 }
 
+// --- PROMPT CACHING CONTROLS ---
+
+function buildCacheExplainerHtml() {
+  const sharePct = Math.round(cachedInputShare * 100);
+  const reuseLabel = Number.isFinite(cacheReuseRounds) ? `${cacheReuseRounds}` : '∞ (steady state)';
+  return `
+    <p><code>${CACHE_FORMULA_TEXT}</code></p>
+    <ul>
+      <li><strong>base</strong> — listed input price per 1M tokens</li>
+      <li><strong>s</strong> — assumed share of input tokens served from cache (current: ${sharePct}%)</li>
+      <li><strong>R</strong> — average times each cached context is re-read (current: ${reuseLabel})</li>
+      <li><strong>r / w</strong> — published cache-read / cache-write rate per 1M tokens</li>
+    </ul>
+    <p>Fallback rules:</p>
+    <ul>
+      ${CACHE_FORMULA_RULES.map(rule => `<li>${rule}</li>`).join('')}
+    </ul>
+    <p>Full details, provider field mapping and calibration: <a href="methodology.html" target="_blank" rel="noopener">Cost &amp; Caching Methodology</a>.</p>
+  `;
+}
+
+function updateCacheControls() {
+  // Cost column header toggle + "(cache-adjusted)" suffix
+  const suffix = document.getElementById('cost-header-suffix');
+  if (suffix) suffix.hidden = !cacheAwareCost;
+
+  // Share preset chips
+  document.querySelectorAll('.cache-chip').forEach(chip => {
+    const chipShare = parseFloat(chip.dataset.share);
+    const isActive = Number.isFinite(chipShare) && Math.abs(chipShare - cachedInputShare) < 1e-9;
+    chip.classList.toggle('active', isActive);
+    chip.setAttribute('aria-pressed', String(isActive));
+    chip.disabled = !cacheAwareCost;
+  });
+
+  // Reuse rounds select
+  const reuseSelect = document.getElementById('filter-cache-reuse');
+  if (reuseSelect) {
+    reuseSelect.disabled = !cacheAwareCost || cachedInputShare <= 0;
+  }
+
+  // Active-filter hint on the collapsed summary line
+  const hint = document.getElementById('workload-active-hint');
+  if (hint) {
+    hint.hidden = !onlyCachingProviders;
+  }
+
+  // Live explainer content
+  const explainer = document.getElementById('cache-math-explainer');
+  if (explainer) {
+    explainer.innerHTML = buildCacheExplainerHtml();
+  }
+}
+
 // --- RENDER FUNCTIONS ---
 
 function formatCurrency(val, currency = selectedCurrency) {
@@ -1427,25 +1625,25 @@ function renderTable(models) {
     if (contextRange.min) {
       if (contextRange.max !== null && contextRange.min < contextRange.max) {
         const tooltip = `Minimum Context Window: ${contextRange.min.toLocaleString()} tokens\n(Range across ${contextRange.count} providers: ${contextRange.min.toLocaleString()} – ${contextRange.max.toLocaleString()} tokens)`;
-        contextStr = `<span title="${tooltip}" style="cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.35);">${contextRange.min.toLocaleString()}</span>`;
+        contextStr = `<span title="${tooltip}" style="cursor: help; border-bottom: 1px dotted;">${contextRange.min.toLocaleString()}</span>`;
       } else {
         contextStr = contextRange.min.toLocaleString();
       }
     }
 
-    // Provider badges list
-    const availableProvidersHtml = Object.keys(m.offers).map(providerId => {
+    // Provider badges list (respects the caching visibility filter)
+    const availableProvidersHtml = getActiveOffers(m).map(([providerId]) => {
       const providerName = PROVIDER_DISPLAY_NAMES[providerId] || providerId;
       return `<span class="badge ${PROVIDER_BADGE_CLASS}" style="margin-right: 4px; font-size: 0.7rem;">${providerName}</span>`;
     }).join('');
 
-    // Best Provider details column
+    // Best Provider details column — same per-offer basis as the workload cost
     const bestDetails = getBestProviderDetails(m);
     let bestProviderHtml = '<span style="color: var(--text-dark);">N/A</span>';
     if (bestDetails) {
-      const allOfferCosts = Object.entries(m.offers)
+      const allOfferCosts = getActiveOffers(m)
         .map(([pid, offer]) => {
-          const ic = getOfferInputCost(pid, offer);
+          const ic = getOfferEffectiveInputCost(pid, offer);
           const oc = getOfferOutputCost(pid, offer);
           if (ic === null || oc === null) return null;
           return { pid, name: PROVIDER_DISPLAY_NAMES[pid] || pid, total: ic + oc };
@@ -1470,13 +1668,26 @@ function renderTable(models) {
       bestProviderHtml = `<span style="cursor: help;"${tooltipAttr}>${lowestProviderBadges}</span>`;
     }
 
-    // Cost (your workload) column
+    // Cost (your workload) column — cache-adjusted when the math toggle is on
     const workloadCost = getWorkloadCost(m);
     const workloadFmt = workloadCost === null ? 'N/A' : formatCurrency(workloadCost);
-    const workloadTooltip = workloadCost !== null
-      ? `Lowest-priced offer: ${formatCurrency(inputCost)} input + ${formatCurrency(outputCost)} output per 1M\n(${workloadInputTokens.toLocaleString()} in + ${workloadOutputTokens.toLocaleString()} out) × rate ÷ 1,000,000`
-      : 'Pricing unavailable';
-    const workloadHtml = `<span title="${workloadTooltip}" style="cursor: help; border-bottom: 1px dotted rgba(255,255,255,0.3);">${workloadFmt}</span>`;
+    const cacheActive = cacheAwareCost && cachedInputShare > 0;
+    const reuseLabel = Number.isFinite(cacheReuseRounds) ? `${cacheReuseRounds}×` : 'steady state';
+    let workloadTooltip;
+    if (workloadCost === null) {
+      workloadTooltip = 'Pricing unavailable';
+    } else if (cacheActive) {
+      const bestOffer = getBestWorkloadOffer(m);
+      workloadTooltip =
+        `Cache-adjusted via ${CACHE_FORMULA_TEXT}\n` +
+        `Winning offer: ${formatCurrency(bestOffer.inEff)} eff. input (${Math.round(cachedInputShare * 100)}% cached, ${reuseLabel}) + ${formatCurrency(bestOffer.outRate)} output per 1M\n` +
+        `(${workloadInputTokens.toLocaleString()} in + ${workloadOutputTokens.toLocaleString()} out) ÷ 1,000,000`;
+    } else {
+      workloadTooltip =
+        `Lowest-priced offer: ${formatCurrency(inputCost)} input + ${formatCurrency(outputCost)} output per 1M\n` +
+        `(${workloadInputTokens.toLocaleString()} in + ${workloadOutputTokens.toLocaleString()} out) × rate ÷ 1,000,000`;
+    }
+    const workloadHtml = `<span title="${workloadTooltip}" style="cursor: help; border-bottom: 1px dotted;">${workloadFmt}</span>`;
 
     // Strict Universal Capabilities on Table Row
     const tagsHtml = m.universalCapabilities && m.universalCapabilities.length > 0
@@ -1533,6 +1744,38 @@ window.openComparison = function(modelId) {
   openModalWithSelection(model);
 };
 
+// Native-unit strings for published cache rates displayed in the detail modal.
+function getNativeCacheStrings(providerId, rawOffer) {
+  const out = { read: '', write: '' };
+  if (!rawOffer) return out;
+  if (providerId === 'cortecs') {
+    if (positiveRate(rawOffer.pricing?.cache_read_cost) !== null) out.read = `€${rawOffer.pricing.cache_read_cost.toFixed(2)} EUR`;
+    if (positiveRate(rawOffer.pricing?.cache_write_cost) !== null) out.write = `€${rawOffer.pricing.cache_write_cost.toFixed(2)} EUR`;
+  } else if (providerId === 'mistral') {
+    if (positiveRate(rawOffer.pricing?.cached_input_token) !== null) out.read = `$${rawOffer.pricing.cached_input_token.toFixed(2)} USD`;
+  } else if (providerId === 'edenai') {
+    if (positiveRate(rawOffer.pricing?.cache_read_input_token_cost) !== null) out.read = `$${(rawOffer.pricing.cache_read_input_token_cost * 1000000).toFixed(4)} USD`;
+    else if (positiveRate(rawOffer.pricing?.input_cost_per_token_cache_hit) !== null) out.read = `$${(rawOffer.pricing.input_cost_per_token_cache_hit * 1000000).toFixed(4)} USD`;
+    if (positiveRate(rawOffer.pricing?.cache_creation_input_token_cost) !== null) out.write = `$${(rawOffer.pricing.cache_creation_input_token_cost * 1000000).toFixed(4)} USD`;
+  } else if (providerId === 'opper') {
+    const r = Array.isArray(rawOffer.pricing?.cached_input) ? positiveRate(rawOffer.pricing.cached_input[0]) : null;
+    const w = Array.isArray(rawOffer.pricing?.cache_creation) ? positiveRate(rawOffer.pricing.cache_creation[0]) : null;
+    if (r !== null) out.read = `$${r.toFixed(2)} USD`;
+    if (w !== null) out.write = `$${w.toFixed(2)} USD`;
+  } else if (providerId === 'eurouter') {
+    const cur = rawOffer.pricing?.currency || 'EUR';
+    const sym = cur === 'USD' ? '$' : '€';
+    const rr = parseFloat(rawOffer.pricing?.input_cache_read);
+    const rw = parseFloat(rawOffer.pricing?.input_cache_write);
+    if (Number.isFinite(rr) && rr > 0) out.read = `${sym}${(rr * 1000000).toFixed(2)} ${cur}`;
+    if (Number.isFinite(rw) && rw > 0) out.write = `${sym}${(rw * 1000000).toFixed(2)} ${cur}`;
+  } else if (providerId === 'requesty') {
+    if (positiveRate(rawOffer.cached_price) !== null) out.read = `$${(rawOffer.cached_price * 1000000).toFixed(2)} USD`;
+    if (positiveRate(rawOffer.caching_price) !== null) out.write = `$${(rawOffer.caching_price * 1000000).toFixed(2)} USD`;
+  }
+  return out;
+}
+
 function openModalWithSelection(modelObj) {
   const overlay = document.getElementById('detail-overlay');
   const modalContent = document.querySelector('.modal-content');
@@ -1542,14 +1785,17 @@ function openModalWithSelection(modelObj) {
   document.getElementById('modal-title-text').textContent = getHumanFriendlyName(modelObj.id);
 
   const offersList = [];
-  for (const [providerId, rawOffer] of Object.entries(modelObj.offers)) {
+  // Respect the caching visibility filter so the modal matches the table's offers.
+  for (const [providerId, rawOffer] of getActiveOffers(modelObj)) {
     const normOffer = (modelObj.normalizedOffers && modelObj.normalizedOffers[providerId]) || normalizeOffer(providerId, rawOffer);
     const pricingProviderId = providerId === 'mistral-regional' ? 'mistral' : providerId;
     const inCost = getOfferInputCost(pricingProviderId, rawOffer, selectedCurrency);
     const outCost = getOfferOutputCost(pricingProviderId, rawOffer, selectedCurrency);
-    const cacheCost = getOfferCacheReadCost(pricingProviderId, rawOffer, selectedCurrency);
+    const cacheRates = getOfferCacheRates(pricingProviderId, rawOffer, selectedCurrency);
+    const cacheSupportState = getOfferCacheSupport(pricingProviderId, rawOffer);
+    const nativeCache = getNativeCacheStrings(pricingProviderId, rawOffer);
     
-    let origIn = '', origOut = '', origCache = '';
+    let origIn = '', origOut = '';
     if (providerId === 'mammouth' && rawOffer && rawOffer.model_info) {
       if (typeof rawOffer.model_info.input_cost_per_token === 'number') {
         origIn = `$${(rawOffer.model_info.input_cost_per_token * 1000000).toFixed(2)} USD`;
@@ -1563,9 +1809,6 @@ function openModalWithSelection(modelObj) {
       }
       if (typeof rawOffer.pricing.output_token === 'number') {
         origOut = `€${rawOffer.pricing.output_token.toFixed(2)} EUR`;
-      }
-      if (typeof rawOffer.pricing.cache_read_cost === 'number') {
-        origCache = `€${rawOffer.pricing.cache_read_cost.toFixed(2)} EUR`;
       }
     } else if (pricingProviderId === 'mistral' && rawOffer && rawOffer.pricing) {
       if (typeof rawOffer.pricing.input_token === 'number') {
@@ -1602,9 +1845,6 @@ function openModalWithSelection(modelObj) {
       if (typeof rawOffer.output_price === 'number') {
         origOut = `$${(rawOffer.output_price * 1000000).toFixed(2)} USD`;
       }
-      if (typeof rawOffer.cached_price === 'number') {
-        origCache = `$${(rawOffer.cached_price * 1000000).toFixed(2)} USD`;
-      }
     }
 
     offersList.push({
@@ -1612,11 +1852,12 @@ function openModalWithSelection(modelObj) {
       providerName: normOffer.providerName,
       inCost,
       outCost,
-      cacheCost,
+      cacheRates,
+      cacheSupportState,
+      nativeCache,
       totalCost: inCost !== null && outCost !== null ? inCost + outCost : Infinity,
       origIn,
       origOut,
-      origCache,
       normOffer,
       offer: rawOffer
     });
@@ -1648,7 +1889,7 @@ function openModalWithSelection(modelObj) {
   const overviewHtml = `
     <div class="modal-overview-section">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-        <span style="font-size:0.75rem; color:var(--text-dark); text-transform:uppercase; font-weight:800; letter-spacing:0.04em;">Creator: <span style="color:#ffffff;">${modelObj.creator}</span></span>
+        <span style="font-size:0.75rem; color:var(--text-dark); text-transform:uppercase; font-weight:800; letter-spacing:0.04em;">Creator: <span style="color:var(--text-main);">${modelObj.creator}</span></span>
         <span style="font-size:0.72rem; color:var(--text-muted); background:rgba(255,255,255,0.04); padding:2px 8px; border-radius:4px; border:1px solid var(--border-color);">${offersList.length} Active European Offer${offersList.length > 1 ? 's' : ''}</span>
       </div>
       ${descHtml}
@@ -1685,20 +1926,46 @@ function openModalWithSelection(modelObj) {
         unsupported: { symbol: '—', color: '#475569', label: 'Explicitly unsupported' }
       }[status];
       return `
-        <span title="${CAPABILITY_DESCRIPTIONS[cap]} ${statusMeta.label}." aria-label="${cap}: ${CAPABILITY_DESCRIPTIONS[cap]} ${statusMeta.label}." style="font-size:0.7rem; padding: 1px 5px; border-radius: 3px; color:${statusMeta.color}; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); font-weight:600;">
+        <span title="${CAPABILITY_DESCRIPTIONS[cap]} ${statusMeta.label}." aria-label="${cap}: ${CAPABILITY_DESCRIPTIONS[cap]} ${statusMeta.label}." style="font-size:0.7rem; padding: 1px 5px; border-radius: 3px; color:${statusMeta.color}; background:rgba(255,255,255,0.02); border:1px solid var(--border-color); font-weight:600;">
           ${statusMeta.symbol} ${cap}
         </span>
       `;
     }).join('');
 
-    // Prompt Caching Price Row
+    // Prompt Caching details: published rates when available, otherwise an explicit state
     let cacheRowHtml = '';
-    if (off.cacheCost !== null) {
+    if (off.cacheRates.read !== null || off.cacheRates.write !== null) {
+      const cacheRows = [];
+      if (off.cacheRates.read !== null) {
+        cacheRows.push(`
+          <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
+            <span class="lbl" style="font-size:0.65rem; color:var(--savings-color); text-transform:uppercase; font-weight:700;">Cache Read / 1M</span>
+            <span class="val" style="font-size:0.9rem; font-weight:700; font-family:var(--font-mono); color:var(--savings-color);">${formatCurrency(off.cacheRates.read)}<span style="font-size:0.68rem; color:var(--text-muted); font-weight:400;"> ${off.nativeCache.read}</span></span>
+          </div>
+        `);
+      }
+      if (off.cacheRates.write !== null) {
+        cacheRows.push(`
+          <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
+            <span class="lbl" style="font-size:0.65rem; color:var(--savings-color); text-transform:uppercase; font-weight:700;">Cache Write / 1M</span>
+            <span class="val" style="font-size:0.9rem; font-weight:700; font-family:var(--font-mono); color:var(--savings-color);">${formatCurrency(off.cacheRates.write)}<span style="font-size:0.68rem; color:var(--text-muted); font-weight:400;"> ${off.nativeCache.write}</span></span>
+          </div>
+        `);
+      }
       cacheRowHtml = `
-        <div class="modal-field" style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed rgba(255,255,255,0.06);">
-          <span class="lbl" style="font-size:0.65rem; color:#FFCC00; text-transform:uppercase; font-weight:700;">Prompt Cache Read (per 1M)</span>
-          <span class="val" style="font-size:0.95rem; font-weight:700; font-family:var(--font-mono); color:#FFCC00;">${formatCurrency(off.cacheCost)}</span>
-          <span class="desc" style="font-size:0.7rem; color:var(--text-muted);">${off.origCache}</span>
+        <div class="modal-card-cache modal-field" style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed var(--border-color); display:flex; flex-direction:column; gap:3px;">
+          ${cacheRows.join('')}
+        </div>
+      `;
+    } else {
+      const cacheStateText = off.cacheSupportState === 'unsupported'
+        ? 'Not supported per this provider listing.'
+        : off.cacheSupportState === 'flagged'
+          ? 'Supported by this provider — no rate published; cached tokens are estimated at full input price.'
+          : 'No caching information published; cached tokens are estimated at full input price.';
+      cacheRowHtml = `
+        <div class="modal-card-cache" style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed var(--border-color);">
+          <span style="font-size:0.68rem; color:var(--text-muted);">Prompt caching: ${cacheStateText}</span>
         </div>
       `;
     }
@@ -1733,7 +2000,7 @@ function openModalWithSelection(modelObj) {
     }
 
     const infraHtml = infraItems.length > 0
-      ? `<div style="font-size:0.68rem; color:var(--text-muted); background:rgba(255,255,255,0.03); padding:4px 8px; border-radius:4px; border:1px solid rgba(255,255,255,0.05); margin-top:4px;">${infraItems.join(' • ')}</div>`
+      ? `<div style="font-size:0.68rem; color:var(--text-muted); background:rgba(255,255,255,0.03); padding:4px 8px; border-radius:4px; border:1px solid var(--border-color); margin-top:4px;">${infraItems.join(' • ')}</div>`
       : '';
 
     const offerContext = off.normOffer.contextSize ? `${off.normOffer.contextSize.toLocaleString()} context` : 'Standard context';
@@ -1751,60 +2018,46 @@ function openModalWithSelection(modelObj) {
       ? `<div style="margin-top: 6px;">
           <span style="font-size:0.6rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 3px;">Same Model Listed As (${providerAltIds.length})</span>
           <div style="display:flex; flex-wrap:wrap; gap:4px;">
-            ${providerAltIds.map(id => `<code style="font-family:var(--font-mono); font-size:0.66rem; color:#94a3b8; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); padding:1px 5px; border-radius:4px;">${escapeHtml(id)}</code>`).join('')}
+            ${providerAltIds.map(id => `<code style="font-family:var(--font-mono); font-size:0.66rem; color:var(--text-muted); background:rgba(255,255,255,0.03); border:1px solid var(--border-color); padding:1px 5px; border-radius:4px;">${escapeHtml(id)}</code>`).join('')}
           </div>
         </div>`
       : '';
 
     return `
-      <div class="modal-model-card" style="${cardStyle}">
+      <div class="modal-model-card" style="--card-i:${idx}; ${cardStyle}">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <span class="badge ${badgeClass}">${off.providerName}</span>
         </div>
-        
-        <div>
+
+        <div class="modal-card-slug">
           <span style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 4px;">API Model Slug</span>
           <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; justify-content:space-between; gap: 8px;">
-            <code style="font-family:var(--font-mono); font-size:0.75rem; color:#e2e8f0; word-break:break-all;">${displayModelId(off.normOffer.rawModelId)}</code>
+            <code style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-main); word-break:break-all;">${displayModelId(off.normOffer.rawModelId)}</code>
             <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${displayModelId(off.normOffer.rawModelId)}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; transition: color 0.15s;" title="Copy to clipboard">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             </button>
           </div>
-          ${off.normOffer.alternateSlugs && off.normOffer.alternateSlugs.length > 0 ? `
-            <div style="margin-top: 6px;">
-              <span style="font-size:0.6rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 3px;">Also Available As (Rolling Alias)</span>
-              ${off.normOffer.alternateSlugs.map(alt => `
-                <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.015); border: 1px dashed rgba(255,255,255,0.1); padding: 3px 6px; border-radius: 5px; justify-content:space-between; gap: 6px; margin-bottom: 4px;">
-                  <code style="font-family:var(--font-mono); font-size:0.7rem; color:#94a3b8; word-break:break-all;">${displayModelId(alt.rawModelId)}</code>
-                  <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${displayModelId(alt.rawModelId)}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center;" title="Copy alias slug">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                  </button>
-                </div>
-              `).join('')}
-            </div>
-          ` : ''}
-          ${sameModelIdsHtml}
         </div>
 
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
           <div class="modal-field">
             <span class="lbl" style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700;">Input / 1M</span>
-            <span class="val" style="font-size:1rem; font-weight:700; font-family:var(--font-mono); color:#fff">${formatCurrency(off.inCost)}</span>
+            <span class="val" style="font-size:1rem; font-weight:700; font-family:var(--font-mono); color:var(--text-main)">${formatCurrency(off.inCost)}</span>
             <span class="desc" style="font-size:0.68rem; color:var(--text-muted);">${off.origIn}</span>
           </div>
-          
+
           <div class="modal-field">
             <span class="lbl" style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700;">Output / 1M</span>
-            <span class="val" style="font-size:1rem; font-weight:700; font-family:var(--font-mono); color:#fff">${formatCurrency(off.outCost)}</span>
+            <span class="val" style="font-size:1rem; font-weight:700; font-family:var(--font-mono); color:var(--text-main)">${formatCurrency(off.outCost)}</span>
             <span class="desc" style="font-size:0.68rem; color:var(--text-muted);">${off.origOut}</span>
           </div>
         </div>
 
         ${cacheRowHtml}
 
-        <div>
+        <div class="modal-card-limits">
           <span class="lbl" style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 2px;">Limits</span>
-          <span style="font-family:var(--font-mono); font-size:0.75rem; color:#ffffff;">${limitsStr}</span>
+          <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-main);">${limitsStr}</span>
         </div>
 
         <div>
@@ -1814,6 +2067,20 @@ function openModalWithSelection(modelObj) {
           </div>
         </div>
 
+        ${off.normOffer.alternateSlugs && off.normOffer.alternateSlugs.length > 0 ? `
+          <div style="margin-top: auto; padding-top: 0.25rem;">
+            <span style="font-size:0.6rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 3px;">Also Available As (Rolling Alias)</span>
+            ${off.normOffer.alternateSlugs.map(alt => `
+              <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.015); border: 1px dashed var(--border-color); padding: 3px 6px; border-radius: 5px; justify-content:space-between; gap: 6px; margin-bottom: 4px;">
+                  <code style="font-family:var(--font-mono); font-size:0.7rem; color:var(--text-muted); word-break:break-all;">${displayModelId(alt.rawModelId)}</code>
+                <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${displayModelId(alt.rawModelId)}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center;" title="Copy alias slug">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+        ${sameModelIdsHtml}
         ${infraHtml}
       </div>
     `;
@@ -1829,10 +2096,77 @@ function openModalWithSelection(modelObj) {
     </p>
   `;
 
+  overlay.classList.remove('closing');
   overlay.classList.add('active');
 }
 
+// Close with the drop-out animation (unless reduced motion), then hide.
+function closeDetailOverlay() {
+  const overlay = document.getElementById('detail-overlay');
+  if (!overlay || !overlay.classList.contains('active')) return;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    overlay.classList.remove('active');
+    return;
+  }
+  overlay.classList.add('closing');
+  setTimeout(() => {
+    overlay.classList.remove('active', 'closing');
+  }, 190);
+}
+
 // --- SETUP EVENT LISTENERS ---
+
+// Animated theme switch: circular wipe expanding from the toggle button where the
+// View Transitions API is available (Chromium/Safari), staggered section fade as
+// fallback (Firefox), instant swap when the user prefers reduced motion.
+function animateThemeChange(apply) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    apply();
+    return;
+  }
+
+  if (document.startViewTransition) {
+    const toggle = document.getElementById('theme-toggle');
+    const rect = toggle ? toggle.getBoundingClientRect() : null;
+    const x = rect ? rect.left + rect.width / 2 : window.innerWidth - 60;
+    const y = rect ? rect.top + rect.height / 2 : 60;
+    const radius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+    const viewTransition = document.startViewTransition(apply);
+    viewTransition.ready.then(() => {
+      document.documentElement.animate(
+        {
+          clipPath: [
+            `circle(0px at ${x}px ${y}px)`,
+            `circle(${radius}px at ${x}px ${y}px)`
+          ]
+        },
+        {
+          duration: 550,
+          easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+          pseudoElement: '::view-transition-new(root)'
+        }
+      );
+    }).catch(() => {});
+    return;
+  }
+
+  // Fallback: fade the marked page sections out step by step, swap the theme
+  // while they are invisible, then let them reappear in the same order.
+  if (document.body.classList.contains('theme-fading-out')) {
+    apply();
+    return;
+  }
+  const steps = Array.from(document.querySelectorAll('[data-theme-step]'));
+  steps.forEach((el, index) => el.style.setProperty('--theme-step', String(index)));
+  const staggerMs = 300 + steps.length * 45;
+  document.body.classList.add('theme-fading-out');
+  setTimeout(() => {
+    apply();
+    document.body.classList.remove('theme-fading-out');
+    document.body.classList.add('theme-fading-in');
+    setTimeout(() => document.body.classList.remove('theme-fading-in'), staggerMs);
+  }, staggerMs);
+}
 
 function setupUIEventListeners() {
   // 1. Theme toggle
@@ -1842,13 +2176,16 @@ function setupUIEventListeners() {
       const isLight = selectedTheme === 'light';
       document.documentElement.dataset.theme = selectedTheme;
       localStorage.setItem('euroinference-theme', selectedTheme);
-      themeToggle.setAttribute('aria-label', `Switch to ${isLight ? 'dark' : 'light'} mode`);
+      themeToggle.setAttribute('aria-label', `Switch to ${isLight ? 'dark' : 'light' } mode`);
       themeToggle.title = `Switch to ${isLight ? 'dark' : 'light'} mode`;
     };
     updateThemeToggle();
     themeToggle.addEventListener('click', () => {
-      selectedTheme = selectedTheme === 'light' ? 'dark' : 'light';
-      updateThemeToggle();
+      const nextTheme = selectedTheme === 'light' ? 'dark' : 'light';
+      animateThemeChange(() => {
+        selectedTheme = nextTheme;
+        updateThemeToggle();
+      });
     });
   }
 
@@ -2014,6 +2351,48 @@ function setupUIEventListeners() {
     outputTokensInput.addEventListener('change', handler);
   }
 
+  // 2c. Prompt-caching controls (cost math toggle, share presets, reuse rounds,
+  // caching-only visibility filter)
+  const cacheAwareToggle = document.getElementById('filter-cache-aware');
+  if (cacheAwareToggle) {
+    cacheAwareToggle.addEventListener('change', (e) => {
+      cacheAwareCost = e.target.checked;
+      updateCacheControls();
+      applyFiltersAndRender();
+    });
+  }
+
+  const cacheOnlyToggle = document.getElementById('filter-cache-only');
+  if (cacheOnlyToggle) {
+    cacheOnlyToggle.addEventListener('change', (e) => {
+      onlyCachingProviders = e.target.checked;
+      updateCacheControls();
+      applyFiltersAndRender();
+    });
+  }
+
+  document.querySelectorAll('.cache-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const share = parseFloat(chip.dataset.share);
+      if (Number.isNaN(share)) return;
+      cachedInputShare = share;
+      updateCacheControls();
+      applyFiltersAndRender();
+    });
+  });
+
+  const cacheReuseSelect = document.getElementById('filter-cache-reuse');
+  if (cacheReuseSelect) {
+    cacheReuseSelect.addEventListener('change', (e) => {
+      const value = e.target.value === 'Infinity' ? Infinity : parseFloat(e.target.value);
+      if (value === Infinity || (Number.isFinite(value) && value >= 1)) {
+        cacheReuseRounds = value;
+      }
+      updateCacheControls();
+      applyFiltersAndRender();
+    });
+  }
+
   // Prevent sorting when clicking inside header filter inputs/selects
   document.querySelectorAll('.header-filter-input, .provider-filter-toggle, .provider-filter-menu').forEach(el => {
     el.addEventListener('click', (e) => {
@@ -2025,13 +2404,11 @@ function setupUIEventListeners() {
   const modalClose = document.getElementById('modal-close-btn');
   const overlay = document.getElementById('detail-overlay');
   if (modalClose && overlay) {
-    modalClose.addEventListener('click', () => {
-      overlay.classList.remove('active');
-    });
-    
+    modalClose.addEventListener('click', closeDetailOverlay);
+
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) {
-        overlay.classList.remove('active');
+        closeDetailOverlay();
       }
     });
   }

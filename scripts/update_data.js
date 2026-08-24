@@ -329,9 +329,15 @@ function parseMistralCatalog(pricingHtml, pricingEurHtml, modelMap, apiModels = 
       const name = cells[0].replace(/↗/g, '').trim().toLowerCase();
       const input = Number(cells[1].replace(/[^\d.]/g, ''));
       const output = Number(cells[3].replace(/[^\d.]/g, ''));
-      if (Number.isFinite(input) && Number.isFinite(output)) {
-        target.set(name, { input, output });
+      if (!Number.isFinite(input) || !Number.isFinite(output)) continue;
+      // Column [2] is "Cached input" on Mistral's pricing tables. Treat it as a published
+      // rate only when the cell contains digits; "Free" or "—" placeholders yield no rate.
+      let cached = null;
+      if (/\d/.test(cells[2])) {
+        const parsedCached = Number(cells[2].replace(/[^\d.]/g, ''));
+        if (Number.isFinite(parsedCached)) cached = parsedCached;
       }
+      target.set(name, { input, output, cached });
     }
   }
 
@@ -349,30 +355,43 @@ function parseMistralCatalog(pricingHtml, pricingEurHtml, modelMap, apiModels = 
       const slug = registryEntry?.providers?.mistral?.slugs?.find(candidate => apiModels.some(model => model.id === candidate))
         || findApiSlug(label, apiModels, slugAliases);
       if (!slug) return [];
+      const eurPrices = price.eur || {};
+      const basePricing = {
+        input_token: price.input,
+        output_token: price.output,
+        input_token_eur: eurPrices.input,
+        output_token_eur: eurPrices.output,
+        currency: 'USD'
+      };
+      // Regional duplicates keep the documented 1.1x premium on every rate,
+      // including the cached-input rate.
+      const regionalPricing = {
+        input_token: price.input * 1.1,
+        output_token: price.output * 1.1,
+        input_token_eur: eurPrices.input && eurPrices.input * 1.1,
+        output_token_eur: eurPrices.output && eurPrices.output * 1.1,
+        currency: 'USD'
+      };
+      if (price.cached != null) {
+        basePricing.cached_input_token = price.cached;
+        regionalPricing.cached_input_token = price.cached * 1.1;
+        if (eurPrices.cached != null) {
+          basePricing.cached_input_token_eur = eurPrices.cached;
+          regionalPricing.cached_input_token_eur = eurPrices.cached * 1.1;
+        }
+      }
       const base = {
         id: slug,
         name: registryEntry?.display_name || label,
         owned_by: registryEntry?.creator || 'Mistral AI',
-        pricing: {
-          input_token: price.input,
-          output_token: price.output,
-          input_token_eur: price.eur && price.eur.input,
-          output_token_eur: price.eur && price.eur.output,
-          currency: 'USD'
-        }
+        pricing: basePricing
       };
       return [base, {
         ...base,
         id: `${slug}@regional`,
         name: `${label} (Regional)`,
         owned_by: 'Mistral AI Regional',
-        pricing: {
-          input_token: price.input * 1.1,
-          output_token: price.output * 1.1,
-          input_token_eur: price.eur && price.eur.input * 1.1,
-          output_token_eur: price.eur && price.eur.output * 1.1,
-          currency: 'USD'
-        }
+        pricing: regionalPricing
       }];
     });
 }
@@ -434,10 +453,10 @@ const FIELD_ALLOWLIST = {
   // Pricing subfields app.js reads
     pricing: {
       cortecs: ['input_token', 'output_token', 'cache_read_cost', 'cache_write_cost', 'audio_cost', 'currency'],
-      mistral: ['input_token', 'output_token', 'input_token_eur', 'output_token_eur', 'currency'],
-    edenai: ['input_cost_per_token', 'output_cost_per_token'],
-    opper: ['input', 'output'],
-    eurouter: ['prompt', 'completion', 'currency'],
+      mistral: ['input_token', 'output_token', 'input_token_eur', 'output_token_eur', 'cached_input_token', 'cached_input_token_eur', 'currency'],
+    edenai: ['input_cost_per_token', 'output_cost_per_token', 'cache_read_input_token_cost', 'cache_creation_input_token_cost', 'input_cost_per_token_cache_hit'],
+    opper: ['input', 'output', 'cached_input', 'cache_creation'],
+    eurouter: ['prompt', 'completion', 'input_cache_read', 'input_cache_write', 'currency'],
     requesty: null,
   },
   // Nested model_info fields Mammouth needs
@@ -482,7 +501,50 @@ function pickFields(provider, model) {
     if (!(key in model)) continue;
     trimmed[key] = pruneNested(provider, key, model[key]);
   }
-  return trimmed;
+  return sanitizeCacheFields(provider, trimmed);
+}
+
+// Optional cache-rate fields are sanitized defensively: anything that is not a finite
+// positive number is dropped so app.js never has to re-validate shapes. Zero counts as
+// "not offered" (EURouter-style sentinel), never as a free rate.
+const CACHE_FIELD_SPECS = {
+  cortecs: { pricing: ['cache_read_cost', 'cache_write_cost'] },
+  mistral: { pricing: ['cached_input_token', 'cached_input_token_eur'] },
+  edenai: { pricing: ['cache_read_input_token_cost', 'cache_creation_input_token_cost', 'input_cost_per_token_cache_hit'] },
+  opper: { pricingArrays: ['cached_input', 'cache_creation'] },
+  eurouter: { pricing: ['input_cache_read', 'input_cache_write'] },
+  requesty: { top: ['cached_price', 'caching_price'] }
+};
+
+function sanitizePositiveNumber(value) {
+  const num = typeof value === 'number' ? value : parseFloat(value);
+  return Number.isFinite(num) && num > 0 ? num : undefined;
+}
+
+function sanitizeCacheFields(provider, model) {
+  const spec = CACHE_FIELD_SPECS[provider];
+  if (!spec) return model;
+  for (const key of spec.top || []) {
+    if (!(key in model)) continue;
+    const clean = sanitizePositiveNumber(model[key]);
+    if (clean === undefined) delete model[key];
+    else model[key] = clean;
+  }
+  if ((spec.pricing || spec.pricingArrays) && model.pricing && typeof model.pricing === 'object') {
+    for (const key of spec.pricing || []) {
+      if (!(key in model.pricing)) continue;
+      const clean = sanitizePositiveNumber(model.pricing[key]);
+      if (clean === undefined) delete model.pricing[key];
+      else model.pricing[key] = clean;
+    }
+    for (const key of spec.pricingArrays || []) {
+      if (!Array.isArray(model.pricing[key])) continue;
+      const filtered = model.pricing[key].filter(v => Number.isFinite(v) && v > 0);
+      if (filtered.length > 0) model.pricing[key] = filtered;
+      else delete model.pricing[key];
+    }
+  }
+  return model;
 }
 
 function pruneNested(provider, key, value) {
