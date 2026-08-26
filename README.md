@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://euroinference.sites.deploybase.eu">Live dashboard</a>
+  <a href="https://euroinference.eu">Live dashboard</a>
   &nbsp; | &nbsp;
   <a href="https://github.com/nichu42/euroinference/issues">Issues</a>
   &nbsp; | &nbsp;
