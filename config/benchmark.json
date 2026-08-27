@@ -1,0 +1,12 @@
+{
+  "providers": {
+    "openrouter": {
+      "display_name": "OpenRouter",
+      "endpoint": "https://openrouter.ai/api/v1/models",
+      "role": "non-eu-reference",
+      "currency": "USD"
+    }
+  },
+  "exclude_suffixes": [":free", ":batch"],
+  "representative_rule": "One reference offer per canonical model: prefer the most recently listed variant (OpenRouter keeps legacy generation-era slugs whose names can equal the family name), then the shortest id, then alphabetical order."
+}

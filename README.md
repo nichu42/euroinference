@@ -47,9 +47,12 @@ EuroInference is a static, browser-based comparison dashboard for people evaluat
 - Search and filter by model, creator, provider, minimum context window, input price, and output price.
 - Estimate the cost of a representative workload with configurable input and output token counts.
 - Model prompt-caching economics in the workload estimate with configurable cached-input share and reuse assumptions; filter for caching-capable providers ([methodology](METHODOLOGY.md)).
-- Inspect provider offers, context limits, capabilities, modalities, regions, and additional model metadata.
+- Inspect provider offers, context limits, capabilities, modalities, regions, and additional model metadata (weights, release date via models.dev when matched).
+- Answer the same data-sovereignty questions on every offer — jurisdiction, retention, training, hosting vs inference, routing — `✓ EU`/`EU (US)`/`EU-Sovereign`/`Global` short badges with `CLOUD Act` nuance, unknown kept visible ([methodology](METHODOLOGY.md)).
+- Show one greyed-out non-EU reference offer (OpenRouter) in the detail modal when available, purely for price comparison; it is excluded from all rankings, filters, and estimates.
 - Keep the page fast and predictable by shipping a generated `data.js` cache instead of querying provider APIs at page load.
 - Show an update warning when a provider refresh failed instead of silently presenting stale records as current.
+- Enrich generic model facts (lab, modalities, reasoning, tool call, weights, release date, limits, description) via the [models.dev](https://models.dev) `MIT` catalog when matched.
 
 ## Live dashboard
 
@@ -61,13 +64,15 @@ The dashboard is a static site. Search terms, filters, currency selection, workl
 
 The repository contains two separate parts:
 
-1. `index.html`, `styles.css`, `app.js`, and the generated `data.js` render the browser dashboard.
-2. `scripts/update_data.js` fetches provider catalogs and pricing, validates response shapes, normalizes model records, and writes a new `data.js`.
+1. `index.html`, `styles.css`, `unify.js` (shared unification engine), `app.js`, and the generated `data.js` render the browser dashboard.
+2. `scripts/update_data.js` fetches provider catalogs and pricing, validates response shapes, normalizes model records, and — via the shared `unify.js` engine — groups, prunes and annotates everything into a pre-unified `UNIFIED_MODELS` list, so the browser only filters, converts and renders.
 
 The updater currently collects:
 
 | Source | Purpose |
 | --- | --- |
+| [models.dev](https://models.dev) | Provider-agnostic model facts (unified name, lab, modalities, reasoning, tool call, weights, description) — `MIT`, baked into `UNIFIED_MODELS[].modelsDev` |
+| Frankfurter | EUR/USD reference exchange rate |
 | Mammouth AI | Public model catalog and token pricing |
 | Cortecs | OpenAI-compatible model catalog and pricing |
 | Eden AI | Model catalog, capabilities, regions, and pricing |
@@ -75,7 +80,7 @@ The updater currently collects:
 | EURouter | Model catalog, tags, provider offers, and pricing |
 | Requesty AI | Model catalog, capabilities, retention, and pricing |
 | Mistral AI | Authenticated model catalog plus public USD/EUR pricing pages |
-| Frankfurter | EUR/USD reference exchange rate |
+| OpenRouter | Non-EU reference offers for the detail modal comparison only (excluded from rankings) |
 
 Provider data is intentionally normalized for comparison. Model names, creator labels, token prices, currencies, context sizes, and capabilities do not necessarily use identical source fields or definitions. Missing or unknown values should be treated as unknown, not as a guarantee that a provider does not support a feature.
 
@@ -131,6 +136,8 @@ Contributor-maintained model dictionaries live in [`config/`](config/):
 - [`models.json`](config/models.json) contains canonical model families, display names, creators, provider slugs, and pricing labels.
 - [`mistral_models.json`](config/mistral_models.json) contains Mistral aliases and excluded product categories.
 - [`normalization.json`](config/normalization.json) contains shared creator, display, strict-alias, and provider-alias rules.
+- [`benchmark.json`](config/benchmark.json) defines the non-EU reference provider shown in the detail modal (OpenRouter) and its excluded product suffixes (`:free`, `:batch`).
+- [`sovereignty.json`](config/sovereignty.json) holds per-provider jurisdiction, retention, training, **hosting vs inference** region, and routing facts (source-linked; omitted = unknown, never fabricated). `hosting` = gateway/control plane, `processing_region` = model inference; `EU-Sovereign` = `jurisdiction EU` + `hosting EU` non-US + `inference EU` non-US + `(European model || open-weights)` on non-US infra.
 - [`config/README.md`](config/README.md) documents the schema and contribution conventions.
 
 Prefer a narrow, explicit alias over a broad rule that could merge unrelated model families.
@@ -141,9 +148,19 @@ Run the existing syntax and whitespace checks after changes:
 
 ```powershell
 node --check app.js
+node --check unify.js
 node --check scripts/update_data.js
+node --check scripts/build_credits.js
+node --check scripts/build_methodology.js
+node --check scripts/build_privacy.js
 node --check data.js
 git diff --check
+```
+
+A `pre-commit` hook runs the same checks (`scripts/hooks/pre-commit`). Enable it once:
+
+```powershell
+git config core.hooksPath scripts/hooks
 ```
 
 If you change provider data or normalization rules, also run `node scripts/update_data.js` with the appropriate local credentials and inspect the generated diff.
@@ -152,6 +169,12 @@ If you change pricing or caching logic, regenerate the methodology page and veri
 
 ```powershell
 node scripts/build_methodology.js
+```
+
+If you change credits, regenerate it:
+
+```powershell
+node scripts/build_credits.js
 ```
 
 ## Contributing

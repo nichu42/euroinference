@@ -87,6 +87,25 @@
 <li><strong>Mammouth AI</strong>: no cache signals published; treated as unknown</li>
 </ul>
 <p>Invalid or non-positive cache values are dropped during data generation (<code>scripts/update_data.js</code>), so no fabricated rates can reach the site.</p>
+<h2 id="non-eu-reference-offers-openrouter">Non-EU reference offers (OpenRouter)</h2>
+<p>The detail modal shows one additional greyed-out card for <strong>OpenRouter</strong>, a US-based aggregator, when it lists a matching model. This reference is scoped strictly:</p>
+<ul>
+<li>It is shown <strong>purely for price comparison</strong> next to the European offers, labeled &quot;Non-EU Reference&quot;, and rendered as the last card in the provider grid, visually faded.</li>
+<li>It is <strong>excluded from every calculation on this site</strong>: unified model grouping, consensus capabilities, context floors, lowest-price columns, workload costs, cache math, savings figures, filters, and rankings all use European offers only.</li>
+<li>Free (<code>:free</code>) and batch (<code>:batch</code>) product variants are excluded as distinct non-comparable products; among remaining slugs for one family, a deterministic representative is kept — the most recently listed variant first (legacy generation-era slugs can share the exact family name), then the shortest ID.</li>
+<li>Cache-read rates follow the same honesty rules as EU providers: only published positive rates count, everything else is treated as unknown and estimated at full input price.</li>
+</ul>
+<h2 id="data-sovereignty-panel">Data sovereignty panel</h2>
+<p>Every detail-modal card carries a fixed five-row panel so the same questions are answered for every offer — with <strong>unknown as a first-class answer</strong> (rendered <code>? Unknown</code>, never silently dropped or filled in):</p>
+<ul>
+<li><strong>Jurisdiction</strong> — legal entity location of the provider with country and EU flags.</li>
+<li><strong>Retention</strong> — whether inputs/outputs are kept (zero-day, bounded periods such as abuse-monitoring windows, or unknown).</li>
+<li><strong>Training</strong> — whether customer data is used for model training.</li>
+<li><strong>Region</strong> — where inference processing happens (EU / US / Global).</li>
+<li><strong>Routing</strong> — first-party (&quot;Direct&quot;) vs. aggregator over backend providers; hosting partners are named when listed.</li>
+</ul>
+<p>Precedence: concrete per-listing API signals (Requesty&#39;s declared retention/training tags, region pins such as <code>@us</code>/<code>@eu</code>, host lists) override the provider-level defaults in <code>config/sovereignty.json</code>. That config holds publicly documented, source-linked facts for providers whose APIs expose no sovereignty data; omitted blocks mean unknown. Provider statements are self-published claims, not certifications — verify binding terms with the provider before deployment.</p>
+<p>When one provider serves the same model through several regions, the comparison keeps only what a European user should route through: if an EU-pinned routing exists, every non-EU listing of that provider (US pins included) is dropped from the offer, its alternate IDs and region labels alike. Otherwise a deterministic representative is kept (unpinned &gt; global &gt; explicit non-EU pin), with all routings visible under &quot;Same Model Listed As&quot; and in the Region row&#39;s tooltip.</p>
 <h2 id="default-assumptions-and-calibration">Default assumptions and calibration</h2>
 <p>Shipped defaults: <strong>Agentic preset (s = 80%)</strong>, <strong>R = 4</strong>, caching math enabled.</p>
 <p>Calibration against published real-world measurements (2026):</p>

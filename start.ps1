@@ -22,7 +22,7 @@ try {
 
 # 2. Update model data cache unless skipped
 if (-not $SkipUpdate) {
-    Write-Host "`n[1/3] Fetching live exchange rates & provider data..." -ForegroundColor Yellow
+    Write-Host "`n[1/4] Fetching live exchange rates & provider data..." -ForegroundColor Yellow
     & node scripts/update_data.js
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "Data update encountered issues, but continuing with existing data.js..."
@@ -30,15 +30,22 @@ if (-not $SkipUpdate) {
         Write-Host "Data update completed successfully." -ForegroundColor Green
     }
 } else {
-    Write-Host "`n[1/3] Skipping data update (-SkipUpdate specified)." -ForegroundColor Gray
+    Write-Host "`n[1/4] Skipping data update (-SkipUpdate specified)." -ForegroundColor Gray
 }
+
+# 2b. Build md -> html docs
+Write-Host "`n[2/4] Building docs (credits/methodology/privacy)..." -ForegroundColor Yellow
+& node scripts/build_credits.js
+& node scripts/build_methodology.js
+& node scripts/build_privacy.js
+Write-Host "Docs built." -ForegroundColor Green
 
 # 3. Prepare server & URL
 $url = "http://localhost:$Port/"
-Write-Host "`n[2/3] Opening default browser at $url..." -ForegroundColor Yellow
+Write-Host "`n[3/4] Opening default browser at $url..." -ForegroundColor Yellow
 Start-Process $url
 
-Write-Host "`n[3/3] Starting local HTTP server on port $Port..." -ForegroundColor Green
+Write-Host "`n[4/4] Starting local HTTP server on port $Port..." -ForegroundColor Green
 Write-Host "Press Ctrl+C to stop the server.`n" -ForegroundColor DarkGray
 
 $env:PORT = $Port

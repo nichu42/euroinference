@@ -257,6 +257,16 @@
   border-color: #b6d7f5;
 }
 
+:root[data-theme="light"] .badge-benchmark {
+  color: #526b88;
+  background: #eef2f7;
+  border-color: var(--border-color);
+}
+
+:root[data-theme="light"] .modal-model-card.benchmark-card {
+  background: #fbfcfe;
+}
+
 :root[data-theme="light"] .provider-filter-option:hover {
   color: var(--text-main);
   background: #e2e8f0;
@@ -1318,7 +1328,10 @@ body.theme-fading-in [data-theme-step] {
     animation-delay: 0.08s;
   }
   .overlay-panel.active .modal-model-card {
-    animation: modal-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+    /* "backwards" (not "both"): covers the staggered delay without a flash,
+       then releases styling to CSS after the entrance — so the benchmark
+       card's static fade and its hover state actually apply. */
+    animation: modal-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) backwards;
     animation-delay: calc(0.16s + var(--card-i, 0) * 70ms);
   }
 }
@@ -1565,6 +1578,40 @@ body.theme-fading-in [data-theme-step] {
   min-height: 32px;
 }
 
+/* Data-sovereignty footer: five fixed tri-state rows (jurisdiction, retention,
+   training, region, routing) rendered on every card so unknown answers stay
+   visible. Fixed height keeps the section aligned across cards. */
+.modal-card-sovereignty {
+  min-height: 108px;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sov-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sov-row .sov-lbl {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--text-dark);
+  white-space: nowrap;
+}
+
+.sov-row .sov-val {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-main);
+  text-align: right;
+}
+
 .modal-model-card.mammouth {
   background: rgba(0, 51, 153, 0.08);
   border-color: rgba(59, 130, 246, 0.25);
@@ -1573,6 +1620,27 @@ body.theme-fading-in [data-theme-step] {
 .modal-model-card.cortecs {
   background: rgba(79, 70, 229, 0.08);
   border-color: rgba(129, 140, 248, 0.25);
+}
+
+/* Non-EU reference offer (detail modal): greyed-out comparison card for
+   non-European providers such as OpenRouter. Rendered as the last card in the
+   provider grid, clearly faded (opacity + dashed border + muted surface) so it
+   reads as context, never as an active offer. Theme variables only — no
+   hardcoded accent colors. */
+.modal-model-card.benchmark-card {
+  background: rgba(255, 255, 255, 0.01);
+  border-style: dashed;
+  opacity: 0.55;
+}
+
+.modal-model-card.benchmark-card:hover {
+  opacity: 1;
+}
+
+.badge-benchmark {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
 }
 
 .vs-divider {
@@ -1776,21 +1844,6 @@ table.models-table tr.clickable-row:hover td {
   background: rgba(147, 197, 253, 0.1);
   color: #93c5fd;
   border: 1px solid rgba(147, 197, 253, 0.28);
-}
-
-.tag-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.tag-badge {
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-muted);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  border: 1px solid var(--border-color);
 }
 
 /* Action Button in Table */

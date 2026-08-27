@@ -1,0 +1,412 @@
+{
+  "verified_date": "2026-08-27",
+  "schema_notes": "Per-provider public-policy facts. Omitted blocks are treated as unknown by the app. Sources must be public pages; details quote or paraphrase them. Per-offer API signals always take precedence over these provider-level defaults. Hosting = where the gateway/control plane runs; processing_region = where model inference runs (they differ for aggregators).",
+  "providers": {
+    "mammouth": {
+      "display_name": "Mammouth AI",
+      "jurisdiction": {
+        "country": "France",
+        "code": "FR",
+        "in_eu": true,
+        "detail": "French company (Paris); operates under GDPR.",
+        "sources": [
+          "https://info.mammouth.ai/docs/privacy-policy/"
+        ]
+      },
+      "retention": {
+        "zero_day_by_default": false,
+        "default_days": 30,
+        "detail": "Prompts are kept for conversation history; monitoring logs are deleted after at most 30 rolling days. Upstream model providers do not retain Mammouth prompts beyond 30 days.",
+        "sources": [
+          "https://info.mammouth.ai/docs/about-privacy/",
+          "https://info.mammouth.ai/docs/privacy-policy/"
+        ]
+      },
+      "training": {
+        "uses_customer_data": false,
+        "detail": "No training of models with prompts sent through Mammouth.",
+        "sources": [
+          "https://info.mammouth.ai/docs/about-privacy/"
+        ]
+      },
+      "hosting": {
+        "region": "eu",
+        "detail": "Gateway/control plane hosted in EU (Hetzner Germany, Neon Germany, GCP Belgium, Cloudflare EU).",
+        "sources": [
+          "https://info.mammouth.ai/docs/terms-of-service/"
+        ]
+      },
+      "processing_region": {
+        "region": "global",
+        "detail": "Inference is global: Annex lists Fireworks AI (USA), xAI (USA), and OpenAI/Anthropic/Google as EU/USA. DPA §7.1 says 'primarily' in EEA – some models require US processing via SCCs.",
+        "sources": [
+          "https://info.mammouth.ai/docs/terms-of-service/",
+          "https://info.mammouth.ai/docs/privacy-policy/"
+        ]
+      },
+      "routing": {
+        "model": "aggregator",
+        "detail": "Aggregates multiple upstream providers (OpenAI, Anthropic, Mistral, Google, Fireworks, xAI, etc.); some require US processing. No OpenRouter is listed as sub-processor.",
+        "sources": [
+          "https://info.mammouth.ai/docs/terms-of-service/",
+          "https://info.mammouth.ai/docs/about-privacy/"
+        ]
+      }
+    },
+    "cortecs": {
+      "display_name": "Cortecs",
+      "jurisdiction": {
+        "country": "Austria",
+        "in_eu": true,
+        "detail": "Imprint: Commercial Court of Vienna, company register number 560802i.",
+        "sources": [
+          "https://cortecs.ai/imprint"
+        ],
+        "code": "AT"
+      },
+      "retention": {
+        "zero_day_by_default": true,
+        "detail": "PAYLOAD DATA (prompts/completions) is not retained – recovery is technically impossible and payload is excluded from backups. OPERATIONAL METADATA (timestamps, model selection, token counts, error codes, pseudonymous user IDs) retained up to 12 months for stability/debugging. Data sent to an inference sub-processor is subject to that provider's own retention policy.",
+        "sources": [
+          "https://cortecs.ai/dpa",
+          "https://cortecs.ai/privacyPolicy",
+          "https://cortecs.ai/docs/Data_Processing_Agreement.pdf"
+        ]
+      },
+      "training": {
+        "uses_customer_data": false,
+        "detail": "Cortecs states 'No Training': private customer data should never be used to train AI models; Cortecs acts as primary data processor.",
+        "sources": [
+          "https://cortecs.ai/"
+        ]
+      },
+      "hosting": {
+        "region": "eu",
+        "detail": "Gateway/control plane hosted in EU (OVH SA France, BunnyWay Slovenia, plus EU auth). Account data retained per Austrian §132 (7 years).",
+        "sources": [
+          "https://cortecs.ai/privacyPolicy"
+        ]
+      },
+      "processing_region": {
+        "region": "eu",
+        "detail": "Inference hosted within the EU – all models run on EU-native clouds.",
+        "sources": [
+          "https://cortecs.ai/"
+        ]
+      },
+      "routing": {
+        "model": "aggregator",
+        "detail": "Routes workloads to models hosted within the EU; GDPR-native positioning with EU hosting partners.",
+        "sources": [
+          "https://cortecs.ai/",
+          "https://cortecs.ai/privacyPolicy"
+        ]
+      }
+    },
+    "mistral": {
+      "display_name": "Mistral AI",
+      "jurisdiction": {
+        "country": "France",
+        "in_eu": true,
+        "detail": "French company operating under EU data protection law.",
+        "sources": [
+          "https://legal.mistral.ai/terms/privacy-policy"
+        ],
+        "code": "FR"
+      },
+      "retention": {
+        "zero_day_by_default": false,
+        "default_days": 30,
+        "detail": "API inputs and outputs are kept for the period needed to generate the output plus up to thirty (30) rolling days for abuse monitoring, unless Zero Data Retention is activated (available for eligible stateless pay-as-you-go API calls).",
+        "sources": [
+          "https://legal.mistral.ai/terms/privacy-policy",
+          "https://docs.mistral.ai/admin/monitor-comply/zero-data-retention",
+          "https://help.mistral.ai/en/articles/347612-can-i-activate-zero-data-retention-zdr"
+        ]
+      },
+      "training": {
+        "uses_customer_data": false,
+        "detail": "Data sent through the API is not used for model training.",
+        "sources": [
+          "https://docs.mistral.ai/admin/monitor-comply/privacy-data-controls"
+        ]
+      },
+      "hosting": {
+        "region": "eu",
+        "detail": "Control plane hosted in EU (La Plateforme).",
+        "sources": [
+          "https://mistral.ai/"
+        ]
+      },
+      "processing_region": {
+        "region": "eu",
+        "detail": "Inference from EU infrastructure by default; optional regional endpoints api.eu.mistral.ai / api.us.mistral.ai pin to EU or US (1.1x surcharge).",
+        "sources": [
+          "https://docs.mistral.ai/inference/regional-inference",
+          "https://mistral.ai/news/regional-inference-open-models-new-compute/"
+        ]
+      },
+      "routing": {
+        "model": "direct",
+        "detail": "First-party inference platform.",
+        "sources": []
+      }
+    },
+    "edenai": {
+      "display_name": "Eden AI",
+      "jurisdiction": {
+        "country": "France",
+        "in_eu": true,
+        "detail": "Eden AI is a French company operating under EU data protection law including GDPR.",
+        "sources": [
+          "https://www.edenai.co/privacy"
+        ],
+        "code": "FR"
+      },
+      "retention": {
+        "zero_day_by_default": false,
+        "detail": "Zero Data Retention is implemented at the gateway level with configurable log retention; the dedicated EU endpoint advertises zero data retention. Upstream provider retention varies and is documented per provider.",
+        "sources": [
+          "https://www.edenai.co/post/zero-data-retention-for-ai-apis-what-it-is-why-enterprises-need-it-and-how-to-get-it",
+          "https://www.edenai.co/docs/v3/data-governance/data-retention",
+          "https://www.edenai.co/eu"
+        ]
+      },
+      "training": {
+        "uses_customer_data": false,
+        "detail": "'We do not use your data to train models' (Eden AI privacy policy).",
+        "sources": [
+          "https://www.edenai.co/privacy"
+        ]
+      },
+      "hosting": {
+        "region": "eu",
+        "detail": "Gateway hosted in secure European data centers.",
+        "sources": [
+          "https://www.edenai.co/docs/v3/data-governance/servers-location"
+        ]
+      },
+      "processing_region": {
+        "region": "global",
+        "detail": "Inference is global by default (api.edenai.run). Only api.eu.edenai.run guarantees EU-only inference via EU-eligible providers.",
+        "sources": [
+          "https://www.edenai.co/docs/v3/data-governance/eu-endpoint",
+          "https://www.edenai.co/docs/v3/data-governance/servers-location",
+          "https://www.edenai.co/eu"
+        ]
+      },
+      "routing": {
+        "model": "aggregator",
+        "detail": "Routes to 50+ underlying providers; per-provider training/retention/ZDR posture is published in structured docs.",
+        "sources": [
+          "https://www.edenai.co/docs/v3/data-governance/provider-data-policies"
+        ]
+      }
+    },
+    "opper": {
+      "display_name": "Opper AI",
+      "jurisdiction": {
+        "country": "Sweden",
+        "in_eu": true,
+        "detail": "Opper Technology AB, Enebyberg, Sweden, reg. no. 559446-3720.",
+        "sources": [
+          "https://opper.ai/privacy-policy"
+        ],
+        "code": "SE"
+      },
+      "retention": {
+        "zero_day_by_default": false,
+        "detail": "Data retention is configurable, including zero retention. Model providers may retain request data according to their own policies.",
+        "sources": [
+          "https://opper.ai/security-overview"
+        ]
+      },
+      "training": {
+        "uses_customer_data": false,
+        "detail": "Opper does not use customer data to train models; the sub-processor list documents that listed model providers do not train on customer requests/responses by default.",
+        "sources": [
+          "https://opper.ai/security-overview",
+          "https://opper.ai/ai-compliance"
+        ]
+      },
+      "hosting": {
+        "region": "eu",
+        "detail": "Gateway hosted in AWS Stockholm (eu-north-1).",
+        "sources": [
+          "https://opper.ai/ai-compliance"
+        ]
+      },
+      "processing_region": {
+        "region": "global",
+        "detail": "Inference is global by routing choice: EU routes (AWS Bedrock EU, Azure EU, GCP EU, Mistral, Berget AI) stay in EU; other routes leave EU. EU residency only when EU route is selected.",
+        "sources": [
+          "https://opper.ai/ai-compliance",
+          "https://opper.ai/providers"
+        ]
+      },
+      "routing": {
+        "model": "aggregator",
+        "detail": "Gateway in front of listed model providers; sub-processor list records provider-side postures.",
+        "sources": [
+          "https://opper.ai/ai-compliance"
+        ]
+      }
+    },
+    "eurouter": {
+      "display_name": "EURouter",
+      "jurisdiction": {
+        "country": "Netherlands",
+        "in_eu": true,
+        "detail": "Company headquartered in Utrecht, Netherlands.",
+        "sources": [
+          "https://www.eurouter.ai/providers"
+        ],
+        "code": "NL"
+      },
+      "retention": {
+        "zero_day_by_default": true,
+        "detail": "Zero data retention by default, with guaranteed EU data residency and GDPR compliance.",
+        "sources": [
+          "https://www.eurouter.ai/privacy",
+          "https://www.eurouter.ai/"
+        ]
+      },
+      "training": {
+        "uses_customer_data": false,
+        "detail": "EURouter does not use Customer API Data to train, fine-tune or improve AI models and does not sell Customer API Data; shall not use Input Data to train, fine-tune, or improve any AI Model.",
+        "sources": [
+          "https://www.eurouter.ai/dpa",
+          "https://www.eurouter.ai/terms",
+          "https://www.eurouter.ai/privacy"
+        ]
+      },
+      "hosting": {
+        "region": "eu",
+        "detail": "Gateway hosted in France on renewable energy; compute in Scaleway NL-AMS (Amsterdam) and FR-PAR.",
+        "sources": [
+          "https://www.eurouter.ai/",
+          "https://www.eurouter.ai/dpa"
+        ]
+      },
+      "processing_region": {
+        "region": "eu",
+        "detail": "Inference handled inside Europe only – EU/EEA configurations only (Scaleway, OVHcloud, Mistral AI, IONOS, Nebius etc.).",
+        "sources": [
+          "https://www.eurouter.ai/",
+          "https://www.eurouter.ai/providers",
+          "https://www.eurouter.ai/dpa"
+        ]
+      },
+      "routing": {
+        "model": "aggregator",
+        "detail": "Routes to EU-hosted offerings of multiple model providers.",
+        "sources": [
+          "https://www.eurouter.ai/providers"
+        ]
+      }
+    },
+    "requesty": {
+      "display_name": "Requesty AI",
+      "jurisdiction": {
+        "country": "United Kingdom",
+        "in_eu": false,
+        "detail": "Requesty Ltd, 71-75 Shelton Street, Covent Garden, London WC2H 9JQ, established in the United Kingdom.",
+        "sources": [
+          "https://www.requesty.ai/privacy"
+        ],
+        "code": "GB"
+      },
+      "retention": {
+        "zero_day_by_default": false,
+        "default_days": 30,
+        "detail": "Zero Data Retention is an opt-in organization-level mode with a hard guarantee that no request/response content is stored. When logging is enabled, data is stored encrypted within the EU for up to 30 days. Provider-side retention/training still depends on the routed model (exposed per model via the API).",
+        "sources": [
+          "https://www.requesty.ai/privacy",
+          "https://docs.requesty.ai/features/data-privacy"
+        ]
+      },
+      "training": {
+        "uses_customer_data": false,
+        "detail": "Requesty does not train machine learning models on your data, and never sells personal information. Provider-side training still depends on the upstream provider per model.",
+        "sources": [
+          "https://www.requesty.ai/privacy",
+          "https://docs.requesty.ai/features/data-privacy"
+        ]
+      },
+      "hosting": {
+        "region": "global",
+        "detail": "Gateway hosted globally (nearest routing): EU Frankfurt (eu-central-1), US Virginia, APAC Singapore. EU data stays in Frankfurt only via router.eu.requesty.ai.",
+        "sources": [
+          "https://www.requesty.ai/",
+          "https://docs.requesty.ai/features/eu-routing"
+        ]
+      },
+      "processing_region": {
+        "region": "global",
+        "detail": "Inference is global by routing/model choice; EU-region deployments (Bedrock eu-central-1, Azure France Central/Sweden Central, Vertex EU, Mistral EU) only when EU gateway and EU-eligible model/route are selected.",
+        "sources": [
+          "https://www.requesty.ai/eu",
+          "https://docs.requesty.ai/features/eu-routing"
+        ]
+      },
+      "routing": {
+        "model": "aggregator",
+        "detail": "Requests travel to the upstream LLM provider; each has its own retention and training policies, tagged per model in the catalog.",
+        "sources": [
+          "https://docs.requesty.ai/features/data-privacy"
+        ]
+      }
+    },
+    "openrouter": {
+      "display_name": "OpenRouter",
+      "reference_only": true,
+      "jurisdiction": {
+        "country": "United States",
+        "in_eu": false,
+        "detail": "US-based aggregator (New York).",
+        "sources": [
+          "https://www.whatjobs.com/news/stripe-agrees-to-buy-openrouter-as-payments-giant-pushes-deeper-into-ai/"
+        ],
+        "code": "US"
+      },
+      "retention": {
+        "zero_day_by_default": false,
+        "detail": "Retention is defined per endpoint/provider; privacy settings can restrict routing to Zero-Retention endpoints. OpenRouter's own retention policy and caching behavior are documented separately.",
+        "sources": [
+          "https://openrouter.ai/docs/guides/features/zdr",
+          "https://openrouter.ai/docs/guides/privacy/provider-logging"
+        ]
+      },
+      "training": {
+        "uses_customer_data": true,
+        "detail": "Some routed providers may train on prompts according to their own policies; an account setting controls whether routing to such providers is allowed. ZDR endpoints cannot train.",
+        "sources": [
+          "https://openrouter.ai/docs/guides/privacy/provider-logging",
+          "https://openrouter.ai/docs/features/zdr"
+        ]
+      },
+      "hosting": {
+        "region": "global",
+        "detail": "Control plane global (Cloudflare + GCP).",
+        "sources": [
+          "https://openrouter.ai/authorized-sub-processors"
+        ]
+      },
+      "processing_region": {
+        "region": "global",
+        "detail": "Global routing across hundreds of hosted endpoints; enterprise in-region routing exists but is not the default.",
+        "sources": [
+          "https://openrouter.ai/docs/guides/privacy/provider-logging",
+          "https://openrouter.ai/blog/insights/ai-data-residency/"
+        ]
+      },
+      "routing": {
+        "model": "aggregator",
+        "detail": "Aggregates many upstream providers worldwide; data policies vary per endpoint.",
+        "sources": [
+          "https://openrouter.ai/docs/guides/privacy/provider-logging"
+        ]
+      }
+    }
+  }
+}

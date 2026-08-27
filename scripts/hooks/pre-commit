@@ -1,0 +1,32 @@
+#!/bin/sh
+# Pre-commit syntax checks — runs quickly, aborts commit on failure.
+set -e
+echo "pre-commit: syntax checks"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node not in PATH, skipping node --check (install Node.js 18+)"
+else
+  for f in app.js unify.js scripts/update_data.js scripts/build_credits.js scripts/build_methodology.js scripts/build_privacy.js data.js; do
+    if [ -f "$f" ]; then
+      echo "  node --check $f"
+      node --check "$f" || exit 1
+    fi
+  done
+fi
+
+# Whitespace errors
+if ! git diff --check --cached; then
+  echo "pre-commit: git diff --check failed (whitespace errors)"
+  exit 1
+fi
+
+# Regenerate md->html if sources changed and ensure committed html is up to date
+if git diff --cached --name-only | grep -Eq '^(CREDITS|METHODOLOGY|PRIVACY)\.md$|scripts/build_.*\.js$'; then
+  echo "  rebuilding docs (credits/methodology/privacy)"
+  node scripts/build_credits.js
+  node scripts/build_methodology.js
+  node scripts/build_privacy.js
+  git add credits.html methodology.html privacy.html
+fi
+
+echo "pre-commit: ok"

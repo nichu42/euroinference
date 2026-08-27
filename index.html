@@ -8,7 +8,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="EuroInference: Direct multi-provider pricing and feature comparison dashboard for European LLM networks (Mammouth AI, Cortecs, Mistral AI), normalized dynamically in USD and EUR.">
+  <meta name="description" content="EuroInference: Direct multi-provider pricing and feature comparison dashboard for European LLM providers.">
   <title>EuroInference | Multi-Provider LLM Pricing Compare</title>
   <link rel="icon" type="image/webp" href="assets/logo_100px.webp">
   <link rel="apple-touch-icon" href="assets/logo_250px.webp">
@@ -243,7 +243,9 @@
           <span aria-hidden="true" style="margin:0 0.55rem;opacity:0.55;">•</span>
           <a href="privacy.html" class="footer-link">Privacy / Impressum</a>
           <span aria-hidden="true" style="margin:0 0.55rem;opacity:0.55;">•</span>
-          <a href="methodology.html" class="footer-link">Cost Methodology</a>
+          <a href="methodology.html" class="footer-link">Methodology</a>
+          <span aria-hidden="true" style="margin:0 0.55rem;opacity:0.55;">•</span>
+          <a href="credits.html" class="footer-link">Credits</a>
         </div>
         <div class="footer-right-col">
           <a href="https://deploybase.eu" rel="noopener" class="deploybase-badge"><svg width="14" height="16" viewBox="0 0 34 40" aria-hidden="true"><path d="M17 0 L34 10 L17 20 L0 10Z" fill="#a5b4fc"/><path d="M0 10 L17 20 L17 40 L0 30Z" fill="#6366f1"/><path d="M17 20 L34 10 L34 30 L17 40Z" fill="#3730a3"/></svg><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#34d399"></span>Hosted in the EU</a>
@@ -269,6 +271,7 @@
   </div>
 
   <!-- Load Data snapshots first -->
+  <script src="unify.js" defer></script>
   <script src="data.js" defer></script>
   <!-- Load Main Application Logic -->
   <script src="app.js" defer></script>

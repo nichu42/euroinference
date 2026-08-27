@@ -69,6 +69,29 @@ Per offer, one of four states is derived and shown in the detail modal:
 
 Invalid or non-positive cache values are dropped during data generation (`scripts/update_data.js`), so no fabricated rates can reach the site.
 
+## Non-EU reference offers (OpenRouter)
+
+The detail modal shows one additional greyed-out card for **OpenRouter**, a US-based aggregator, when it lists a matching model. This reference is scoped strictly:
+
+- It is shown **purely for price comparison** next to the European offers, labeled "Non-EU Reference", and rendered as the last card in the provider grid, visually faded.
+- It is **excluded from every calculation on this site**: unified model grouping, consensus capabilities, context floors, lowest-price columns, workload costs, cache math, savings figures, filters, and rankings all use European offers only.
+- Free (`:free`) and batch (`:batch`) product variants are excluded as distinct non-comparable products; among remaining slugs for one family, a deterministic representative is kept — the most recently listed variant first (legacy generation-era slugs can share the exact family name), then the shortest ID.
+- Cache-read rates follow the same honesty rules as EU providers: only published positive rates count, everything else is treated as unknown and estimated at full input price.
+
+## Data sovereignty panel
+
+Every detail-modal card carries a fixed five-row panel so the same questions are answered for every offer — with **unknown as a first-class answer** (rendered `? Unknown`, never silently dropped or filled in):
+
+- **Jurisdiction** — legal entity location of the provider with country and EU flags.
+- **Retention** — whether inputs/outputs are kept (zero-day, bounded periods such as abuse-monitoring windows, or unknown).
+- **Training** — whether customer data is used for model training.
+- **Region** — where inference processing happens (EU / US / Global).
+- **Routing** — first-party ("Direct") vs. aggregator over backend providers; hosting partners are named when listed.
+
+Precedence: concrete per-listing API signals (Requesty's declared retention/training tags, region pins such as `@us`/`@eu`, host lists) override the provider-level defaults in `config/sovereignty.json`. That config holds publicly documented, source-linked facts for providers whose APIs expose no sovereignty data; omitted blocks mean unknown. Provider statements are self-published claims, not certifications — verify binding terms with the provider before deployment.
+
+When one provider serves the same model through several regions, the comparison keeps only what a European user should route through: if an EU-pinned routing exists, every non-EU listing of that provider (US pins included) is dropped from the offer, its alternate IDs and region labels alike. Otherwise a deterministic representative is kept (unpinned > global > explicit non-EU pin), with all routings visible under "Same Model Listed As" and in the Region row's tooltip.
+
 ## Default assumptions and calibration
 
 Shipped defaults: **Agentic preset (s = 80%)**, **R = 4**, caching math enabled.

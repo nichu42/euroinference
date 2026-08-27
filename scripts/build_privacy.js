@@ -26,7 +26,9 @@ function renderInline(value) {
   rendered = rendered.replace(/`([^`]+)`/g, '<code>$1</code>');
   rendered = rendered.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   rendered = rendered.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) => {
-    return `<a href="${escapeHtml(safeHref(href))}">${label}</a>`;
+    const safe = escapeHtml(safeHref(href));
+    const isExternal = /^https?:/i.test(safe);
+    return isExternal ? `<a href="${safe}" target="_blank" rel="noopener noreferrer">${label}</a>` : `<a href="${safe}">${label}</a>`;
   });
   return rendered;
 }

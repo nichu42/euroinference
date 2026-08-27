@@ -11,6 +11,9 @@ const configDir = path.join(__dirname, '../config');
 const mistralModelMap = JSON.parse(fs.readFileSync(path.join(configDir, 'mistral_models.json'), 'utf8'));
 const normalizationMap = JSON.parse(fs.readFileSync(path.join(configDir, 'normalization.json'), 'utf8'));
 const modelRegistry = JSON.parse(fs.readFileSync(path.join(configDir, 'models.json'), 'utf8'));
+const benchmarkMap = JSON.parse(fs.readFileSync(path.join(configDir, 'benchmark.json'), 'utf8'));
+const sovereigntyMap = JSON.parse(fs.readFileSync(path.join(configDir, 'sovereignty.json'), 'utf8'));
+const EuroUnify = require('../unify');
 
 const RETRY_LIMIT = 3;
 const RETRY_DELAY_MS = 1000;
@@ -84,7 +87,7 @@ function normalizeModelId(id) {
   // Amazon Bedrock keeps the family as a vendor prefix: deepseek.v3.2 -> deepseek-v3.2 (not v3.2)
   clean = clean.replace(/^deepseek\./i, 'deepseek-');
   // Strip vendor dot prefixes (Amazon Bedrock <vendor>.<model> convention)
-  clean = clean.replace(/^(anthropic|openai|google|meta|cohere|mistral|amazon|ibm|alibaba|zhipu|moonshot|moonshotai|microsoft|snowflake|deepseek|ai21|writer|qwen|zai|nvidia|minimax)\./i, '');
+  clean = clean.replace(/^(anthropic|openai|google|meta|cohere|mistral|amazon|ibm|alibaba|zhipu|moonshot|moonshotai|microsoft|snowflake|deepseek|ai21|writer|qwen|zai|nvidia|minimax|xai)\./i, '');
   // Strip leading Zai/Zhipu vendor hyphen/underscore prefixes (e.g. zai-glm-4.7 -> glm-4.7)
   clean = clean.replace(/^(zai|zhipu)[-_]/i, '');
   // Strip host hyphen prefixes (mirror of the runtime normalizer)
@@ -119,6 +122,7 @@ async function run() {
   let requestyData = null;
   let mistralData = null;
   let mistralApiModels = null;
+  let openrouterData = null;
   const updateStatus = {};
   
   // 1. Fetch exchange rate
@@ -240,7 +244,36 @@ async function run() {
   } catch (err) {
     console.warn('Failed to fetch Mistral AI models:', err.message);
   }
-  
+
+  // 9. Fetch OpenRouter models — non-EU reference for the detail modal only.
+  // These records never enter the unified model list or any ranking/estimate.
+  try {
+    const endpoint = benchmarkMap.providers?.openrouter?.endpoint || 'https://openrouter.ai/api/v1/models';
+    const res = await fetchWithRetry(endpoint, {}, 'OpenRouter');
+    const json = await res.json();
+    openrouterData = buildOpenRouterCatalog(validateModelRecords(json.data, 'OpenRouter'));
+    updateStatus.openrouter = Array.isArray(openrouterData);
+    console.log(`Fetched ${openrouterData.length} OpenRouter reference offers (from ${json.data.length} listed models).`);
+  } catch (err) {
+    updateStatus.openrouter = false;
+    console.error('Failed to fetch OpenRouter models:', err.message);
+  }
+
+  // 10. Fetch models.dev provider-agnostic catalog for enrichment (unified name, lab, modalities, reasoning, tool_call, weights, release_date, context, output, description)
+  // Note: repo reports models.json as legacy — canonical is now https://models.dev/models.json (provider-agnostic) via catalog generation.
+  let modelsDevCatalog = null;
+  try {
+    const res = await fetchWithRetry('https://models.dev/models.json', {}, 'models.dev');
+    modelsDevCatalog = await res.json();
+    const count = modelsDevCatalog && typeof modelsDevCatalog === 'object' ? Object.keys(modelsDevCatalog).length : 0;
+    updateStatus.modelsDev = true;
+    console.log(`Fetched models.dev catalog: ${count} agnostic models (unified name/lab/modalities/reasoning/tool_call/weights/release/context/output/description).`);
+  } catch (err) {
+    updateStatus.modelsDev = false;
+    console.warn('Failed to fetch models.dev catalog (non-fatal, fallback to inferred capabilities):', err.message);
+    modelsDevCatalog = null;
+  }
+
   // Resolve data path
   const dataFilePath = path.join(__dirname, '../data.js');
   // Trim each provider's data down to only the fields app.js actually reads.
@@ -252,6 +285,7 @@ async function run() {
   if (eurouterData) eurouterData = eurouterData.map(m => pickFields('eurouter', m));
   if (requestyData) requestyData = requestyData.map(m => pickFields('requesty', m));
   if (mistralData) mistralData = mistralData.map(m => pickFields('mistral', m));
+  if (openrouterData) openrouterData = openrouterData.map(m => pickFields('openrouter', m));
 
   const normalizeProviderData = (provider, data) => data ? data.map(model => normalizeGeneratedModel(provider, model)) : [];
   mammouthData = normalizeProviderData('mammouth', mammouthData);
@@ -261,38 +295,122 @@ async function run() {
   opperData = normalizeProviderData('opper', opperData);
   eurouterData = normalizeProviderData('eurouter', eurouterData);
   requestyData = normalizeProviderData('requesty', requestyData);
+  openrouterData = normalizeProviderData('openrouter', openrouterData);
+
+  // Unify everything at generation time: grouping, alias resolution, EU-region
+  // pruning, capability consensus and sovereignty resolution all happen here so
+  // the browser only renders. unify.js is the single shared implementation.
+  const { models: unified, sovereigntyMeta } = EuroUnify.buildUnifiedModels({
+    providers: {
+      mammouth: mammouthData || [],
+      cortecs: cortecsData || [],
+      mistral: mistralData || [],
+      edenai: edenaiData || [],
+      opper: opperData || [],
+      eurouter: eurouterData || [],
+      requesty: requestyData || [],
+      openrouter: openrouterData || []
+    },
+    sovereignty: sovereigntyMap,
+    modelsDev: modelsDevCatalog
+  });
+
+  // Sanity check: every unified model must expose at least one priced offer.
+  const emptyModels = unified.filter(m => Object.keys(m.offers).length === 0);
+  if (emptyModels.length > 0) throw new Error(`Unified data contains ${emptyModels.length} models without offers`);
+
+  // Drop the rawModel back-reference inside normalizedOffers: it would
+  // serialize every listing twice. The raw offers themselves stay (cost
+  // getters read their pricing fields).
+  let droppedRefs = 0;
+  for (const m of unified) {
+    for (const norm of Object.values(m.normalizedOffers)) {
+      if ('rawModel' in norm) { delete norm.rawModel; droppedRefs++; }
+    }
+    if (m.benchmarkSovereignty === null) delete m.benchmarkSovereignty;
+  }
+
+  // Serialize only the fields the browser still reads from raw offers:
+  // pricing/cache-rate inputs for the currency-aware getters, explicit
+  // caching flags for the tri-state filter, and OpenRouter capability inputs
+  // for the reference card's live normalization. Everything else (descriptions,
+  // capability derivations, limits, region metadata) is already baked into the
+  // unified model or its normalizedOffers.
+  const OFFER_KEEP = {
+    cortecs: ['pricing', 'supported_features', 'tags', 'input_modalities', 'output_modalities'],
+    mammouth: ['model_info'],
+    mistral: ['pricing', 'context_size'],
+    edenai: ['pricing', 'capabilities'],
+    opper: ['pricing', 'region'],
+    eurouter: ['pricing', 'tags'],
+    requesty: ['input_price', 'output_price', 'cached_price', 'caching_price', 'supports_caching',
+      'supports_reasoning', 'supports_vision', 'supports_tool_calling', 'supports_output_json_schema',
+      'data_retention_days', 'data_used_for_training', 'geolocation', 'context_window', 'max_output_tokens'],
+    openrouter: ['id', 'name', 'created', 'context_length', 'max_completion_tokens',
+      'supported_parameters', 'input_modalities', 'pricing']
+  };
+  const NORM_KEEP = new Set(['providerId', 'providerName', 'rawModelId', 'contextSize', 'maxOutputTokens',
+    'capabilityStatus', 'alternateSlugs']);
+  // Only the hosting-partner list survives on infrastructure: routing tooltips
+  // read it; region/geolocation signals are baked into sovereigntyByProvider.
+  const INFRA_KEEP = new Set(['hosts']);
+  const pruneObject = (obj, keep) => {
+    for (const key of Object.keys(obj)) {
+      if (!keep.includes(key)) delete obj[key];
+    }
+  };
+  for (const m of unified) {
+    for (const [key, raw] of Object.entries(m.offers)) {
+      const pid = key === 'mistral-regional' ? 'mistral' : key;
+      pruneObject(raw, [...FIELD_ALLOWLIST.all, ...(OFFER_KEEP[pid] || [])]);
+      if (raw.capabilities && typeof raw.capabilities === 'object') {
+        raw.capabilities = Object.fromEntries(
+          Object.entries(raw.capabilities).filter(([, v]) => typeof v === 'boolean')
+        );
+      }
+    }
+    for (const norm of Object.values(m.normalizedOffers)) {
+      for (const k of Object.keys(norm)) {
+        if (!NORM_KEEP.has(k)) delete norm[k];
+      }
+      if (norm.infrastructure && typeof norm.infrastructure === 'object') {
+        norm.infrastructure = Object.fromEntries(
+          Object.entries(norm.infrastructure).filter(([k]) => INFRA_KEEP.has(k))
+        );
+      }
+    }
+  }
+
+  const offerTally = {};
+  for (const m of unified) {
+    for (const key of Object.keys(m.offers)) {
+      offerTally[key] = (offerTally[key] || 0) + 1;
+    }
+  }
+  console.log(`Unified ${unified.length} models across providers:`, offerTally,
+    `(${unified.filter(m => m.benchmarkOffer).length} with non-EU reference)`);
 
   // Construct the new data.js file content
-  const outMammouth = JSON.stringify(mammouthData || []);
-  const outCortecs = JSON.stringify(cortecsData || []);
-  const outEden = JSON.stringify(edenaiData || []);
-  const outOpper = JSON.stringify(opperData || []);
-  const outEurouter = JSON.stringify(eurouterData || []);
-  const outRequesty = JSON.stringify(requestyData || []);
   const outRate = JSON.stringify(exchangeRateData ? (exchangeRateData[0] || exchangeRateData) : null);
+  const outUnified = JSON.stringify(unified);
 
   const timestamp = new Date().toISOString();
-  const outMistral = JSON.stringify(mistralData || []);
   const content = `// Auto-generated data file - Do not edit manually. Generated at ${timestamp}
 
 const LAST_UPDATED = ${JSON.stringify(timestamp)};
 const UPDATE_STATUS = ${JSON.stringify(updateStatus)};
 
-const MAMMOUTH_DATA = ${outMammouth};
-
-const CORTECS_DATA = ${outCortecs};
-
 const EXCHANGE_RATE = ${outRate};
 
-const MISTRAL_DATA = ${outMistral};
+// Pre-unified models: grouped, region-pruned, capability-consensus-resolved
+// and sovereignty-annotated at generation time by scripts/update_data.js via
+// the shared unify.js engine. The browser only filters, converts and renders.
+const UNIFIED_MODELS = ${outUnified};
 
-const EDENAI_DATA = ${outEden};
-
-const OPPER_DATA = ${outOpper};
-
-const EUROUTER_DATA = ${outEurouter};
-
-const REQUESTY_DATA = ${outRequesty};
+// Provider-level sovereignty narrative (jurisdiction details, policy quotes,
+// source links) shared by all offers of a provider. Per-offer state lives on
+// the unified models; the browser merges both.
+const SOVEREIGNTY_META = ${JSON.stringify(sovereigntyMeta)};
 `;
 
   fs.writeFileSync(dataFilePath, content, 'utf8');
@@ -428,6 +546,52 @@ function findApiSlug(label, apiModels, aliases) {
   return match ? match.id : null;
 }
 
+// Build the OpenRouter reference catalog. Only models with usable, positive
+// token pricing for input AND output are kept; free/batch product variants
+// (documented suffixes) are excluded as distinct non-comparable products.
+function buildOpenRouterCatalog(rawModels) {
+  const cfg = benchmarkMap.providers?.openrouter || {};
+  const excludeSuffixes = Array.isArray(benchmarkMap.exclude_suffixes) ? benchmarkMap.exclude_suffixes : [':free'];
+  return rawModels.flatMap(model => {
+    const id = String(model.id || '').trim();
+    if (!id) return [];
+    if (excludeSuffixes.some(suffix => id.endsWith(suffix))) return [];
+    const pricing = model.pricing && typeof model.pricing === 'object' ? model.pricing : {};
+    const prompt = Number(pricing.prompt);
+    const completion = Number(pricing.completion);
+    if (!Number.isFinite(prompt) || !Number.isFinite(completion) || prompt <= 0 || completion <= 0) return [];
+    const cacheRead = Number(pricing.input_cache_read);
+    // Owner heuristic: prefer the display-name prefix ("DeepSeek: ..."), fall back to
+    // the id vendor segment ("deepseek/..."). Both resolve via normalization creator_aliases.
+    const namePrefix = typeof model.name === 'string' && model.name.includes(':')
+      ? model.name.split(':')[0].toLowerCase().trim()
+      : '';
+    const idPrefix = id.includes('/') ? id.split('/')[0].toLowerCase() : '';
+    const out = {
+      id,
+      name: typeof model.name === 'string' && model.name.trim() ? model.name.trim() : id,
+      // Catalog listing timestamp: drives "current variant" representative selection
+      created: typeof model.created === 'number' && Number.isFinite(model.created) ? model.created : undefined,
+      context_length: typeof model.context_length === 'number' && model.context_length > 0 ? model.context_length : undefined,
+      pricing: {
+        prompt,
+        completion,
+        ...(Number.isFinite(cacheRead) && cacheRead > 0 ? { input_cache_read: cacheRead } : {}),
+        currency: cfg.currency || 'USD'
+      }
+    };
+    if (model.top_provider && typeof model.top_provider.max_completion_tokens === 'number') {
+      out.max_completion_tokens = model.top_provider.max_completion_tokens;
+    }
+    if (namePrefix || idPrefix) out.owned_by = namePrefix || idPrefix;
+    if (Array.isArray(model.supported_parameters)) out.supported_parameters = model.supported_parameters.filter(p => typeof p === 'string');
+    if (model.architecture && Array.isArray(model.architecture.input_modalities)) {
+      out.input_modalities = model.architecture.input_modalities.filter(m => typeof m === 'string');
+    }
+    return [out];
+  });
+}
+
 // Whitelist of fields each provider's model objects must keep.
 // These are the only fields app.js reads. Anything else is dead weight in the shipped bundle.
 // Mirror of the field accesses in app.js (addOffer, getOfferInputCost, getOfferOutputCost, getModelCreator).
@@ -450,6 +614,10 @@ const FIELD_ALLOWLIST = {
     'supports_tool_calling', 'supports_output_json_schema', 'supports_image_generation',
     'data_retention_days', 'data_used_for_training', 'geolocation'
   ],
+  openrouter: [
+    'id', 'name', 'owned_by', 'created', 'context_length', 'max_completion_tokens',
+    'supported_parameters', 'input_modalities', 'pricing', 'canonical_id', 'creator', 'display_name'
+  ],
   // Pricing subfields app.js reads
     pricing: {
       cortecs: ['input_token', 'output_token', 'cache_read_cost', 'cache_write_cost', 'audio_cost', 'currency'],
@@ -458,6 +626,7 @@ const FIELD_ALLOWLIST = {
     opper: ['input', 'output', 'cached_input', 'cache_creation'],
     eurouter: ['prompt', 'completion', 'input_cache_read', 'input_cache_write', 'currency'],
     requesty: null,
+    openrouter: ['prompt', 'completion', 'input_cache_read', 'currency'],
   },
   // Nested model_info fields Mammouth needs
   model_info: {
@@ -513,7 +682,8 @@ const CACHE_FIELD_SPECS = {
   edenai: { pricing: ['cache_read_input_token_cost', 'cache_creation_input_token_cost', 'input_cost_per_token_cache_hit'] },
   opper: { pricingArrays: ['cached_input', 'cache_creation'] },
   eurouter: { pricing: ['input_cache_read', 'input_cache_write'] },
-  requesty: { top: ['cached_price', 'caching_price'] }
+  requesty: { top: ['cached_price', 'caching_price'] },
+  openrouter: { pricing: ['input_cache_read'] }
 };
 
 function sanitizePositiveNumber(value) {

@@ -3,13 +3,8 @@
 // See LICENSE file in the project root for full license text.
 
 // State Variables
-let mammouthModels = [];
-let cortecsModels = [];
-let mistralModels = [];
-let edenaiModels = [];
-let opperModels = [];
-let eurouterModels = [];
-let requestyModels = [];
+let unifiedModels = []; // Pre-unified at generation time (see unify.js / data.js UNIFIED_MODELS)
+const BENCHMARK_PROVIDER_ID = 'openrouter';
 let exchangeRate = 1.1406; // Overwritten at init from data.js EXCHANGE_RATE constant
 let exchangeRateDate = '2026-07-15'; // Overwritten at init from data.js EXCHANGE_RATE constant
 let selectedCurrency = 'EUR'; // 'EUR' or 'USD'
@@ -59,55 +54,29 @@ let costFilterRanges = {
   output: { min: 0, max: Infinity, scaleMax: Infinity }
 };
 
+let _currencySwitchPending = false;
+let _lastCurrency = selectedCurrency;
+const _numberFmt = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const _intFmt = new Intl.NumberFormat(undefined);
+function debounce(fn, ms) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
+// Coalesce multiple synchronous calls into one rAF
+function scheduleRender() {
+  if (scheduleRender._raf) return;
+  scheduleRender._raf = requestAnimationFrame(() => {
+    scheduleRender._raf = null;
+    applyFiltersAndRender();
+  });
+}
+
 // Sorting state
 let currentSortColumn = 'id';
 let currentSortDirection = 'asc'; // 'asc' or 'desc'
-
-// Map of raw creator strings to clean display names
-const CREATOR_NAMES = {
-  'openai': 'OpenAI',
-  'anthropic': 'Anthropic',
-  'google': 'Google',
-  'deepseek': 'DeepSeek',
-  'mistral ai': 'Mistral AI',
-  'mistral': 'Mistral AI',
-  'mistral ai regional': 'Mistral AI Regional',
-  'alibaba cloud': 'Alibaba Cloud',
-  'alibaba': 'Alibaba Cloud',
-  'z.ai': 'Zhipu AI',
-  'zhipu': 'Zhipu AI',
-  'zhipu ai': 'Zhipu AI',
-  'moonshot ai': 'Moonshot AI',
-  'moonshot': 'Moonshot AI',
-  'moonshotai': 'Moonshot AI',
-  'nvidia': 'NVIDIA',
-  'amazon': 'Amazon',
-  'aws': 'Amazon',
-  'meta': 'Meta',
-  'nousresearch': 'Nous Research',
-  'nous research': 'Nous Research',
-  'xiaomimimo': 'Xiaomi',
-  'xiaomi': 'Xiaomi',
-  'tencent hy': 'Tencent',
-  'tencent': 'Tencent',
-  'swiss ai initiative': 'Swiss AI',
-  'swiss ai': 'Swiss AI',
-  'h company': 'H Company',
-  'openbmb': 'OpenBMB',
-  'ibm': 'IBM',
-  'cohere': 'Cohere',
-  'ai21': 'AI21 Labs',
-  'ai21 labs': 'AI21 Labs',
-  'writer': 'Writer',
-  'perplexity': 'Perplexity',
-  'xai': 'xAI',
-  'x.ai': 'xAI',
-  'databricks': 'Databricks',
-  'microsoft': 'Microsoft',
-  'snowflake': 'Snowflake',
-  'deepinfra': 'Deepinfra',
-  'cloudflare': 'Cloudflare'
-};
 
 // --- DATA FETCHING & INITIALIZATION ---
 
@@ -117,7 +86,6 @@ async function init() {
   renderUpdateWarning();
   await fetchModels();
 
-  processAndUnifyModels();
   configureCostFilters();
   setupUIEventListeners();
   renderCreatorsFilter();
@@ -182,106 +150,34 @@ function loadExchangeRate() {
 }
 
 async function fetchModels() {
-  console.log('Loading generated model data...');
-  mammouthModels = (typeof MAMMOUTH_DATA !== 'undefined') ? MAMMOUTH_DATA : [];
-  cortecsModels = (typeof CORTECS_DATA !== 'undefined') ? CORTECS_DATA : [];
-  mistralModels = (typeof MISTRAL_DATA !== 'undefined') ? MISTRAL_DATA : [];
-  edenaiModels = (typeof EDENAI_DATA !== 'undefined') ? EDENAI_DATA : [];
-  opperModels = (typeof OPPER_DATA !== 'undefined') ? OPPER_DATA : [];
-  eurouterModels = (typeof EUROUTER_DATA !== 'undefined') ? EUROUTER_DATA : [];
-  requestyModels = (typeof REQUESTY_DATA !== 'undefined') ? REQUESTY_DATA : [];
-  
-  console.log('Loaded models count:', 
-    mammouthModels.length, cortecsModels.length, mistralModels.length,
-    edenaiModels.length, opperModels.length, eurouterModels.length, requestyModels.length
-  );
+  console.log('Loading pre-unified model data...');
+  unifiedModels = (typeof UNIFIED_MODELS !== 'undefined' && Array.isArray(UNIFIED_MODELS)) ? UNIFIED_MODELS : [];
+
+  const offerTally = {};
+  for (const m of unifiedModels) {
+    for (const key of Object.keys(m.offers || {})) {
+      offerTally[key] = (offerTally[key] || 0) + 1;
+    }
+  }
+  const withRef = unifiedModels.filter(m => m.benchmarkOffer).length;
+  console.log(`Loaded ${unifiedModels.length} unified models:`, offerTally,
+    `(plus ${withRef} non-EU reference offers)`);
 }
 
 // --- NORMALIZATION & MATCHING ENGINE ---
 
-function getCleanModelId(id) {
-  if (!id) return '';
-  let clean = id.toLowerCase();
-  
-  // Strip trailing region suffix like @eu, @us, @global, @europe-west1, @us-east-1
-  clean = clean.replace(/@[a-z0-9_-]+$/i, '');
-  
-  if (clean.includes('/')) {
-    clean = clean.split('/').pop();
-  }
-  
-  if (clean.includes(':')) {
-    clean = clean.split(':')[0];
-  }
-  
-  // Amazon Bedrock keeps the family as a vendor prefix: deepseek.v3.2 -> deepseek-v3.2 (not v3.2)
-  clean = clean.replace(/^deepseek\./i, 'deepseek-');
-  // Strip vendor dot prefixes (Amazon Bedrock <vendor>.<model> convention)
-  clean = clean.replace(/^(anthropic|openai|google|meta|cohere|mistral|amazon|ibm|alibaba|zhipu|moonshot|moonshotai|microsoft|snowflake|deepseek|ai21|writer|qwen|zai|nvidia|minimax)\./i, '');
-  // Strip leading Zai/Zhipu vendor hyphen/underscore prefixes (e.g. zai-glm-4.7 -> glm-4.7)
-  clean = clean.replace(/^(zai|zhipu)[-_]/i, '');
-  // Strip host hyphen prefixes
-  clean = clean.replace(/^(databricks|vertex|bedrock|azure|deepinfra|novita|together|cloudflare|anyscale|replicate|amazon|aws|nvidia|meta)-/i, '');
-  // Strip trailing region suffix like -eu, -us, -global
-  clean = clean.replace(/-(eu|us|global)$/i, '');
-  // Strip -v1, -v2
-  clean = clean.replace(/-v\d+$/i, '');
-  // Strip date snapshots like -2026-04-23, -2025-12-11
-  clean = clean.replace(/-\d{4}-\d{2}-\d{2}$/, '');
-  // Strip 8-digit date snapshots like -20251001, -20240307
-  clean = clean.replace(/-\d{8}$/, '');
-  // Strip 4-digit date suffixes on models with base version (e.g. gpt-4-0613, gpt-3.5-turbo-0125, mistral-large-2402)
-  clean = clean.replace(/(gpt-4|gpt-3\.5-turbo|mistral-large|mistral-small|pixtral-large)-(\d{4})$/, '$1');
-  
-  // Normalize Llama family boundary (llama3.1-70b-instruct -> llama-3.1-70b-instruct) before version normalization
-  clean = clean.replace(/^llama(\d)/, 'llama-$1');
+// Grouping/normalization live in the shared engine unify.js (used by the
+// data updater at generation time). The browser only renders; these thin
+// aliases serve render-time helpers below.
+const getCleanModelId = (id) => EuroUnify.getCleanModelId(id);
+const STANDARD_CAPABILITIES = EuroUnify.STANDARD_CAPABILITIES;
+const PROVIDER_DISPLAY_NAMES = EuroUnify.PROVIDER_DISPLAY_NAMES;
+const REGION_PIN_LABELS = EuroUnify.REGION_PIN_LABELS;
+const regionBucketFromCode = EuroUnify.regionBucketFromCode;
 
-  // Normalize hyphenated decimal versions (gpt-5-5-pro -> gpt-5.5-pro, jamba-1-5 -> jamba-1.5, mistral-medium-3-5 -> mistral-medium-3.5)
-  // ONLY if not followed by b/t (e.g. 70b, 2.4t)
-  clean = clean.replace(/(^|[a-z]-)(\d+)-(\d+)(?![bBtT\d])/g, '$1$2.$3');
 
-  // Normalize underscore version separators (nemotron-3_5-lightning -> nemotron-3.5-lightning, llama-3_1-* -> llama-3.1-*)
-  clean = clean.replace(/(\d+)_(\d+)/g, '$1.$2');
-
-  // Normalize Claude aliases uniformly to: claude-[version]-[tier][modifier]
-  clean = clean.replace(/^claude-(opus|sonnet|haiku|fable)-(\d+(?:\.\d+)?)(.*)$/, 'claude-$2-$1$3');
-  clean = clean.replace(/^claude-(\d+(?:\.\d+)?)-(opus|sonnet|haiku|fable)(.*)$/, 'claude-$1-$2$3');
-
-  // Normalize Mistral aliases
-  clean = clean.replace(/^open-mistral-nemo$/, 'mistral-nemo');
-  clean = clean.replace(/^mistral-medium-3\.5$/, 'mistral-3.5-medium');
-  clean = clean.replace(/^mistral-medium-3\.1$/, 'mistral-3.1-medium');
-  clean = clean.replace(/^mistral-large-3$/, 'mistral-3-large');
-  clean = clean.replace(/^codestral-latest$/, 'codestral');
-  clean = clean.replace(/^mistral-large-latest$/, 'mistral-large');
-  clean = clean.replace(/^mistral-small-latest$/, 'mistral-small');
-
-  // Normalize Qwen aliases (qwen-2.5 -> qwen2.5, qwen-3 -> qwen3)
-  clean = clean.replace(/^qwen-(\d+(?:\.\d+)?)/, 'qwen$1');
-
-  // Normalize GLM aliases (glm-5p2 -> glm-5.2)
-  clean = clean.replace(/^glm-(\d+)p(\d+)/, 'glm-$1.$2');
-
-  return clean;
-}
-
-function getGeneratedCanonicalId(rawModel) {
-  const canonical = rawModel && typeof rawModel.canonical_id === 'string' && rawModel.canonical_id
-    ? rawModel.canonical_id
-    : rawModel && rawModel.id;
-  return getCleanModelId(canonical);
-}
-
-function normalizeSlug(slug) {
-  if (!slug) return '';
-  const clean = getCleanModelId(slug);
-  return clean
-    .replace(/[-_.]/g, '')
-    .replace(/(chat|preview|instruct|it|image|latest|highspeed|customtools|coder|scout|maverick|v\d+)/g, '')
-    .trim();
-}
-
-function getHumanFriendlyName(id) {
+const _friendlyNameCache = new Map();
+const _origGetHumanFriendlyName = function(id) {
   if (!id) return '';
   let clean = getCleanModelId(id);
   const lower = clean.toLowerCase().trim();
@@ -538,55 +434,15 @@ function getHumanFriendlyName(id) {
       return word.charAt(0).toUpperCase() + word.slice(1);
     })
     .join(' ');
+};
+function getHumanFriendlyName(id) {
+  if (_friendlyNameCache.has(id)) return _friendlyNameCache.get(id);
+  const v = _origGetHumanFriendlyName(id);
+  _friendlyNameCache.set(id, v);
+  if (_friendlyNameCache.size > 2000) _friendlyNameCache.clear();
+  return v;
 }
 
-let unifiedModels = [];
-
-function getCleanCreatorName(ownedBy) {
-  if (!ownedBy) return 'Other';
-  const raw = ownedBy.toLowerCase().trim();
-  for (const [key, value] of Object.entries(CREATOR_NAMES)) {
-    if (raw === key || raw.includes(key)) {
-      return value;
-    }
-  }
-  return ownedBy.charAt(0).toUpperCase() + ownedBy.slice(1);
-}
-
-function getModelCreator(modelId, rawOwnedBy) {
-  const cleanId = getCleanModelId(modelId);
-  const id = cleanId.toLowerCase();
-  const rawId = (modelId || '').toLowerCase();
-  
-  if (id.startsWith('gpt-') || id.startsWith('text-embedding-') || id.startsWith('gpt') || id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4') || rawId.includes('openai')) return 'OpenAI';
-  if (id.startsWith('claude-') || id.includes('claude') || rawId.includes('anthropic')) return 'Anthropic';
-  if (id.startsWith('gemini-') || id.startsWith('gemma-') || id.startsWith('gemma') || rawId.includes('google/')) return 'Google';
-  if (id.startsWith('deepseek-') || id.startsWith('deepseek') || id === 'r1' || rawId.includes('deepseek')) return 'DeepSeek';
-  if (id.startsWith('mistral-') || id.startsWith('ministral-') || id.startsWith('pixtral-') || id.startsWith('codestral-') || id.startsWith('devstral-') || id.startsWith('voxtral') || id.startsWith('mixtral-') || rawId.includes('mistral')) return 'Mistral AI';
-  if (id.startsWith('qwen-') || id.startsWith('qwen') || id.startsWith('qwq') || rawId.includes('alibaba') || rawId.includes('qwen')) return 'Alibaba Cloud';
-  if (id.startsWith('glm-') || id.startsWith('glm') || rawId.includes('zhipu') || rawId.includes('zai-org')) return 'Zhipu AI';
-  if (id.startsWith('kimi-') || id.startsWith('kimi') || rawId.includes('moonshot')) return 'Moonshot AI';
-  if (id.startsWith('llama-') || id.startsWith('llama') || rawId.includes('meta-llama') || rawId.includes('meta/')) return 'Meta';
-  if (id.startsWith('minimax-') || id.startsWith('minimax')) return 'MiniMax AI';
-  if (id.startsWith('grok-') || id.startsWith('grok') || rawId.includes('xai')) return 'xAI';
-  if (id.startsWith('sonar-') || id.startsWith('sonar') || rawId.includes('perplexity')) return 'Perplexity';
-  if (id.startsWith('nova-') || id.startsWith('amazon-nova')) return 'Amazon';
-  if (id.startsWith('apertus-')) return 'Swiss AI';
-  if (id.startsWith('hy3') || rawId.includes('tencent')) return 'Tencent';
-  if (id.startsWith('mimo-') || rawId.includes('xiaomi')) return 'Xiaomi';
-  if (id.startsWith('cosmos') || id.startsWith('nvidia-') || id.startsWith('nemotron-') || rawId.includes('nvidia')) return 'NVIDIA';
-  if (id.startsWith('hermes-') || rawId.includes('nousresearch')) return 'Nous Research';
-  if (id.startsWith('holo')) return 'H Company';
-  if (id.startsWith('granite-') || rawId.includes('ibm')) return 'IBM';
-  if (id.startsWith('command-') || id.startsWith('cohere-') || rawId.includes('cohere')) return 'Cohere';
-  if (id.startsWith('jamba-') || rawId.includes('ai21')) return 'AI21 Labs';
-  if (id.startsWith('palmyra-') || rawId.includes('writer')) return 'Writer';
-  if (id.startsWith('minicpm-') || rawId.includes('openbmb')) return 'OpenBMB';
-  
-  return getCleanCreatorName(rawOwnedBy);
-}
-
-const STANDARD_CAPABILITIES = ['Reasoning', 'Tools', 'Vision', 'Code', 'Audio', 'Structured Output', 'Prompt Caching'];
 
 const CAPABILITY_DESCRIPTIONS = {
   Reasoning: 'Extended thinking for multi-step analysis and complex problem solving.',
@@ -598,17 +454,17 @@ const CAPABILITY_DESCRIPTIONS = {
   'Prompt Caching': 'Can reuse prompt content to reduce latency and input cost.'
 };
 
-const PROVIDER_DISPLAY_NAMES = {
-  mammouth: 'Mammouth AI',
-  cortecs: 'Cortecs',
-  mistral: 'Mistral AI',
-  edenai: 'Eden AI',
-  opper: 'Opper AI',
-  eurouter: 'EURouter',
-  requesty: 'Requesty AI'
-};
 
 const PROVIDER_BADGE_CLASS = 'badge-provider';
+
+// --- Data sovereignty display helpers (facts resolved in unify.js) ---
+
+function flagEmoji(code) {
+  const c = String(code || '').toUpperCase();
+  if (!/^[A-Z]{2}$/.test(c)) return '';
+  return String.fromCodePoint(...[...c].map(ch => 127397 + ch.charCodeAt(0)));
+}
+
 
 function areCostsEqual(a, b) {
   return Math.abs(a - b) <= Math.max(1e-9, Math.max(Math.abs(a), Math.abs(b)) * 1e-9);
@@ -619,7 +475,8 @@ function renderUpdateWarning() {
   if (!el || typeof UPDATE_STATUS === 'undefined') return;
   const names = {
     mammouth: 'Mammouth AI', cortecs: 'Cortecs', mistral: 'Mistral AI',
-    edenai: 'Eden AI', opper: 'Opper AI', eurouter: 'EURouter', requesty: 'Requesty AI'
+    edenai: 'Eden AI', opper: 'Opper AI', eurouter: 'EURouter', requesty: 'Requesty AI',
+    openrouter: 'OpenRouter (reference)'
   };
   const failed = Object.entries(names)
     .filter(([id]) => UPDATE_STATUS[id] === false)
@@ -628,414 +485,6 @@ function renderUpdateWarning() {
   if (failed.length === 0) return;
   el.textContent = `Warning: the last update failed for: ${failed.join(', ')}.`;
   el.hidden = false;
-}
-
-function normalizeOffer(providerId, rawModel) {
-  if (!rawModel) return null;
-  const effectiveProviderId = providerId === 'mistral-regional' ? 'mistral' : providerId;
-  const idLower = (rawModel.id || '').toLowerCase();
-  
-  // 1. Creator extraction
-  const rawOwner = rawModel.owned_by || rawModel.author || (rawModel.author_info && rawModel.author_info.display_name) || rawModel.provider_display_name;
-  let creator = rawModel.creator || getModelCreator(rawModel.id, rawOwner);
-  if (effectiveProviderId === 'mistral') {
-    creator = /@regional$/i.test(rawModel.id || '') ? 'Mistral AI Regional' : 'Mistral AI';
-  }
-
-  // 2. Limits extraction
-  let contextSize = null;
-  let maxOutputTokens = null;
-
-  if (providerId === 'cortecs') {
-    contextSize = typeof rawModel.context_size === 'number' ? rawModel.context_size : null;
-    maxOutputTokens = typeof rawModel.max_output_tokens === 'number' ? rawModel.max_output_tokens : null;
-  } else if (providerId === 'mammouth') {
-    if (rawModel.model_info) {
-      contextSize = rawModel.model_info.max_input_tokens || rawModel.model_info.max_output_tokens || null;
-      maxOutputTokens = rawModel.model_info.max_output_tokens || null;
-    }
-  } else if (effectiveProviderId === 'mistral') {
-    contextSize = typeof rawModel.context_size === 'number' ? rawModel.context_size : null;
-  } else if (providerId === 'edenai') {
-    contextSize = typeof rawModel.context_length === 'number' ? rawModel.context_length : null;
-  } else if (providerId === 'opper') {
-    contextSize = typeof rawModel.context_window === 'number' ? rawModel.context_window : null;
-    maxOutputTokens = typeof rawModel.max_output_tokens === 'number' ? rawModel.max_output_tokens : null;
-  } else if (providerId === 'eurouter') {
-    contextSize = typeof rawModel.context_length === 'number' ? rawModel.context_length : null;
-  } else if (providerId === 'requesty') {
-    contextSize = typeof rawModel.context_window === 'number' ? rawModel.context_window : null;
-    maxOutputTokens = typeof rawModel.max_output_tokens === 'number' ? rawModel.max_output_tokens : null;
-  }
-
-  // 3. Capabilities extraction
-  const capabilities = new Set();
-  const capabilityStatus = {};
-  const capabilityObject = rawModel.capabilities && !Array.isArray(rawModel.capabilities) ? rawModel.capabilities : {};
-  const explicitlyFalse = (...values) => values.some(value => value === false);
-  const recordCapability = (capability, supported, unsupported) => {
-    capabilityStatus[capability] = supported ? 'supported' : (unsupported ? 'unsupported' : 'unknown');
-    if (supported) capabilities.add(capability);
-  };
-
-  // Explicit or inferred Reasoning
-  const hasReasoning = 
-    (providerId === 'cortecs' && ((Array.isArray(rawModel.supported_features) && rawModel.supported_features.includes('reasoning')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Reasoning')))) ||
-    (providerId === 'requesty' && rawModel.supports_reasoning === true) ||
-    (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('reasoning')) ||
-    (providerId === 'eurouter' && (rawModel.reasoning === true || (Array.isArray(rawModel.tags) && rawModel.tags.includes('reasoning')))) ||
-    (providerId === 'edenai' && rawModel.capabilities && (rawModel.capabilities.reasoning || rawModel.capabilities.thought)) ||
-    (/\b(reason|reasoner|reasoning|r1|thinking|cot)\b/i.test(idLower) || /qwen3.*thinking/i.test(idLower));
-  recordCapability('Reasoning', hasReasoning, explicitlyFalse(
-    rawModel.supports_reasoning,
-    capabilityObject.supports_reasoning,
-    capabilityObject.reasoning,
-    capabilityObject.thought
-  ));
-
-  // Explicit or inferred Tools / Function Calling
-  const hasTools = 
-    (providerId === 'cortecs' && ((Array.isArray(rawModel.supported_features) && rawModel.supported_features.includes('tools')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Tools')))) ||
-    (providerId === 'requesty' && rawModel.supports_tool_calling === true) ||
-    (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('tools')) ||
-    (providerId === 'eurouter' && Array.isArray(rawModel.tags) && (rawModel.tags.includes('tools') || rawModel.tags.includes('function_calling'))) ||
-    (providerId === 'edenai' && rawModel.capabilities && (rawModel.capabilities.tools || rawModel.capabilities.function_calling)) ||
-    (providerId === 'mammouth' && /^(gpt-|claude-|gemini-|mistral-|qwen|glm-|minimax-|deepseek-v)/i.test(idLower)) ||
-    (/\b(tools?|fc)\b/i.test(idLower));
-  recordCapability('Tools', hasTools, explicitlyFalse(
-    rawModel.supports_tool_calling,
-    capabilityObject.tools,
-    capabilityObject.function_calling
-  ));
-
-  // Explicit or inferred Vision / Multimodal
-  const hasVision = 
-    (providerId === 'cortecs' && ((Array.isArray(rawModel.input_modalities) && rawModel.input_modalities.includes('image')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Image')))) ||
-    (providerId === 'requesty' && rawModel.supports_vision === true) ||
-    (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('vision')) ||
-    (providerId === 'eurouter' && Array.isArray(rawModel.tags) && (rawModel.tags.includes('vision') || rawModel.tags.includes('multimodal'))) ||
-    (providerId === 'edenai' && rawModel.capabilities && (rawModel.capabilities.vision || (Array.isArray(rawModel.capabilities.input_modalities) && rawModel.capabilities.input_modalities.includes('image')))) ||
-    (providerId === 'mammouth' && /^(gpt-4|gpt-5|claude-|gemini-|gemma-3|qwen.*vl|pixtral|glm-5v|llama-4|minimax-m3)/i.test(idLower)) ||
-    (/\b(vision|image|vl|omni|pixtral|glm-5v)\b/i.test(idLower));
-  recordCapability('Vision', hasVision, explicitlyFalse(
-    rawModel.supports_vision,
-    capabilityObject.vision
-  ));
-
-  // Explicit or inferred Code
-  const hasCode = 
-    (providerId === 'cortecs' && Array.isArray(rawModel.tags) && rawModel.tags.includes('Code')) ||
-    (providerId === 'edenai' && rawModel.capabilities && rawModel.capabilities.code) ||
-    (/\b(code|coder|codex|devstral|codestral)\b/i.test(idLower));
-  recordCapability('Code', hasCode, explicitlyFalse(
-    rawModel.supports_code,
-    capabilityObject.code
-  ));
-
-  // Explicit or inferred Audio
-  const hasAudio = 
-    (providerId === 'cortecs' && ((Array.isArray(rawModel.input_modalities) && rawModel.input_modalities.includes('audio')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Audio')))) ||
-    (providerId === 'edenai' && rawModel.capabilities && Array.isArray(rawModel.capabilities.input_modalities) && rawModel.capabilities.input_modalities.includes('audio')) ||
-    (/\b(audio|voice|speech|voxtral)\b/i.test(idLower));
-  recordCapability('Audio', hasAudio, explicitlyFalse(
-    rawModel.supports_audio,
-    capabilityObject.audio
-  ));
-
-  // Explicit or inferred Structured Output / JSON Mode
-  const hasStructuredOutput = 
-    (providerId === 'cortecs' && Array.isArray(rawModel.supported_features) && rawModel.supported_features.includes('json_mode')) ||
-    (providerId === 'requesty' && (rawModel.supports_output_json_schema || rawModel.supports_output_json_object)) ||
-    (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('structured_output')) ||
-    (providerId === 'edenai' && rawModel.capabilities && rawModel.capabilities.structured_output) ||
-    (providerId === 'mammouth' && /^(gpt-|claude-|gemini-|mistral)/i.test(idLower));
-  recordCapability('Structured Output', hasStructuredOutput, explicitlyFalse(
-    rawModel.supports_output_json_schema,
-    rawModel.supports_output_json_object,
-    capabilityObject.structured_output
-  ));
-
-  // Prompt Caching — tri-state via published rates or explicit provider flags
-  const cachingState = getOfferCacheSupport(effectiveProviderId, rawModel);
-  recordCapability('Prompt Caching',
-    cachingState === 'priced' || cachingState === 'flagged',
-    explicitlyFalse(
-      rawModel.supports_caching,
-      capabilityObject.caching,
-      capabilityObject.prompt_caching
-    ) || cachingState === 'unsupported'
-  );
-
-  // 4. Description extraction
-  const description = rawModel.description && typeof rawModel.description === 'string' && rawModel.description.trim() ? rawModel.description.trim() : null;
-
-  // 5. European Infrastructure & Privacy
-  const hosts = (Array.isArray(rawModel.providers) ? rawModel.providers : [])
-    .map(h => typeof h === 'string' ? h : (h?.name || h?.id || h?.provider || ''))
-    .filter(Boolean);
-  const regions = (Array.isArray(rawModel.regions) ? rawModel.regions : (rawModel.region ? [rawModel.region] : []))
-    .map(r => typeof r === 'string' ? r : (r?.name || r?.code || r?.region || ''))
-    .filter(Boolean);
-  const zeroRetention = rawModel.data_retention_days === 0;
-  const noTraining = rawModel.data_used_for_training === false;
-
-  return {
-    providerId,
-    providerName: PROVIDER_DISPLAY_NAMES[providerId] || providerId,
-    rawModelId: rawModel.id,
-    rawModel,
-    creator,
-    contextSize,
-    maxOutputTokens,
-    capabilities: [...capabilities],
-    capabilityStatus,
-    description,
-    infrastructure: {
-      hosts,
-      regions,
-      zeroRetention,
-      noTraining,
-      geolocation: rawModel.geolocation || null
-    }
-  };
-}
-
-function extractVersionNumber(id) {
-  if (!id) return 0;
-  const m = id.match(/(?:^|[^\d])(\d+(?:\.\d+)?)(?![bBtT\d])/);
-  return m ? parseFloat(m[1]) : 0;
-}
-
-function resolveLatestAliases(groups) {
-  const latestGroups = groups.filter(g => g.canonicalId.endsWith('-latest'));
-
-  for (const latestGroup of latestGroups) {
-    const providerIds = Object.keys(latestGroup.normalizedOffers);
-
-    for (const providerId of providerIds) {
-      const latestNorm = latestGroup.normalizedOffers[providerId];
-      const latestRaw = latestGroup.offers[providerId];
-      const inCost = getOfferInputCost(providerId, latestRaw);
-      const outCost = getOfferOutputCost(providerId, latestRaw);
-      const context = latestNorm.contextSize;
-      const creator = latestGroup.creator;
-
-      // Extract family keywords to match appropriate sibling groups
-      const idStr = latestGroup.canonicalId.toLowerCase();
-      let famKeyword = '';
-      if (idStr.includes('opus')) famKeyword = 'opus';
-      else if (idStr.includes('sonnet')) famKeyword = 'sonnet';
-      else if (idStr.includes('haiku')) famKeyword = 'haiku';
-      else if (idStr.includes('fable')) famKeyword = 'fable';
-      else if (idStr.includes('flash')) famKeyword = 'flash';
-      else if (idStr.includes('pro')) famKeyword = 'pro';
-      else if (idStr.includes('mini')) famKeyword = 'mini';
-      else if (idStr.includes('grok-4')) famKeyword = 'grok-4';
-      else if (idStr.includes('grok-3')) famKeyword = 'grok-3';
-      else if (idStr.includes('devstral')) famKeyword = 'devstral';
-      else if (idStr.includes('magistral')) famKeyword = 'magistral';
-      else if (idStr.includes('mistral')) famKeyword = 'mistral';
-
-      // Find candidates from the same provider and same creator
-      const candidates = groups.filter(g => {
-        if (g === latestGroup) return false;
-        if (g.canonicalId.endsWith('-latest')) return false;
-        if (g.creator !== creator) return false;
-        if (!g.normalizedOffers[providerId]) return false;
-        if (famKeyword && !g.canonicalId.includes(famKeyword)) return false;
-
-        const targetRaw = g.offers[providerId];
-        const targetNorm = g.normalizedOffers[providerId];
-        const targetIn = getOfferInputCost(providerId, targetRaw);
-        const targetOut = getOfferOutputCost(providerId, targetRaw);
-
-        // Check costs (allowing minor regional routing variance up to 15%)
-        const diffIn = Math.abs(targetIn - inCost) / (Math.max(targetIn, inCost) || 1);
-        const diffOut = Math.abs(targetOut - outCost) / (Math.max(targetOut, outCost) || 1);
-        if (diffIn > 0.15 || diffOut > 0.15) return false;
-        // Check context if available
-        if (context > 0 && targetNorm.contextSize > 0 && targetNorm.contextSize !== context) return false;
-
-        return true;
-      });
-
-      if (candidates.length > 0) {
-        // Sort by highest version number descending
-        candidates.sort((a, b) => extractVersionNumber(b.canonicalId) - extractVersionNumber(a.canonicalId));
-        const bestTarget = candidates[0];
-
-        const targetNorm = bestTarget.normalizedOffers[providerId];
-        targetNorm.alternateSlugs = targetNorm.alternateSlugs || [];
-        targetNorm.alternateSlugs.push({
-          rawModelId: latestNorm.rawModelId,
-          label: 'latest'
-        });
-
-        delete latestGroup.offers[providerId];
-        delete latestGroup.normalizedOffers[providerId];
-      }
-    }
-  }
-
-  // Remove empty latest groups
-  for (let i = groups.length - 1; i >= 0; i--) {
-    if (Object.keys(groups[i].normalizedOffers).length === 0) {
-      groups.splice(i, 1);
-    }
-  }
-}
-
-function processAndUnifyModels() {
-  if (!Array.isArray(cortecsModels)) cortecsModels = [];
-  if (!Array.isArray(mammouthModels)) mammouthModels = [];
-  if (!Array.isArray(mistralModels)) mistralModels = [];
-  if (!Array.isArray(edenaiModels)) edenaiModels = [];
-  if (!Array.isArray(opperModels)) opperModels = [];
-  if (!Array.isArray(eurouterModels)) eurouterModels = [];
-  if (!Array.isArray(requestyModels)) requestyModels = [];
-
-  const groups = []; // Array of grouped canonical models
-  const canonicalRawIds = new Map(); // canonicalId -> Map(providerId -> Set(raw ID))
-
-  function recordRawId(canonicalId, providerId, rawId) {
-    if (!rawId) return;
-    if (!canonicalRawIds.has(canonicalId)) canonicalRawIds.set(canonicalId, new Map());
-    const byProvider = canonicalRawIds.get(canonicalId);
-    if (!byProvider.has(providerId)) byProvider.set(providerId, new Set());
-    byProvider.get(providerId).add(rawId);
-  }
-  
-  function findGroup(rawModel) {
-    const cleanBaseId = getGeneratedCanonicalId(rawModel);
-    const slug = normalizeSlug(rawModel.id);
-    const digits = cleanBaseId.replace(/[^0-9]/g, '');
-    const canonicalId = cleanBaseId;
-    
-    return groups.find(g => {
-      if (g.canonicalId === canonicalId) return true;
-      
-      const gSlug = normalizeSlug(g.canonicalId);
-      const gCleanBaseId = getCleanModelId(g.canonicalId);
-      const gDigits = gCleanBaseId.replace(/[^0-9]/g, '');
-      return gSlug === slug && gDigits === digits;
-    });
-  }
-  
-  function addOffer(providerId, rawModel) {
-    const normalized = normalizeOffer(providerId, rawModel);
-    if (!normalized) return;
-
-    let group = findGroup(rawModel);
-    if (!group) {
-      const cleanBaseId = getGeneratedCanonicalId(rawModel);
-      const canonicalId = cleanBaseId;
-      
-      group = {
-        canonicalId,
-        creator: normalized.creator,
-        offers: {},
-        normalizedOffers: {}
-      };
-      groups.push(group);
-    }
-    
-    const offerKey = providerId === 'mistral' && /@regional$/i.test(rawModel.id)
-      ? 'mistral-regional'
-      : providerId;
-    group.offers[offerKey] = rawModel;
-    group.normalizedOffers[offerKey] = normalized;
-    recordRawId(group.canonicalId, offerKey, rawModel.id);
-    
-    if (providerId === 'cortecs' || group.creator === 'Other' || (normalized.creator && normalized.creator !== 'Other')) {
-      group.creator = getModelCreator(group.canonicalId, normalized.creator);
-    }
-  }
-  
-  cortecsModels.forEach(m => addOffer('cortecs', m));
-  mammouthModels.forEach(m => addOffer('mammouth', m));
-  mistralModels.forEach(m => addOffer('mistral', m));
-  edenaiModels.forEach(m => addOffer('edenai', m));
-  opperModels.forEach(m => addOffer('opper', m));
-  eurouterModels.forEach(m => addOffer('eurouter', m));
-  requestyModels.forEach(m => addOffer('requesty', m));
-
-  // Smart resolution of generic floating latest models into the provider's matching concrete version
-  resolveLatestAliases(groups);
-  
-  unifiedModels = groups.map(g => {
-    const offerList = Object.values(g.normalizedOffers);
-    const totalOffers = offerList.length;
-
-    // Strict Consensus Capabilities: Supported by 100% of providers offering this model
-    const universalCapabilities = STANDARD_CAPABILITIES.filter(cap => 
-      offerList.every(off => off.capabilities.includes(cap))
-    );
-
-    // Partial Capabilities: Supported by at least one but NOT all providers
-    const partialCapabilities = STANDARD_CAPABILITIES
-      .filter(cap => offerList.some(off => off.capabilities.includes(cap)) && !offerList.every(off => off.capabilities.includes(cap)))
-      .map(cap => {
-        const supportedProviders = offerList.filter(off => off.capabilities.includes(cap)).map(off => off.providerName);
-        return {
-          capability: cap,
-          supportedCount: supportedProviders.length,
-          totalCount: totalOffers,
-          providers: supportedProviders
-        };
-      });
-
-    // Guaranteed Limits: Minimum floor across all offering providers
-    const validContexts = offerList.map(off => off.contextSize).filter(v => typeof v === 'number' && v > 0);
-    const contextMin = validContexts.length > 0 ? Math.min(...validContexts) : null;
-    const contextMax = validContexts.length > 0 ? Math.max(...validContexts) : null;
-
-    const validOutputs = offerList.map(off => off.maxOutputTokens).filter(v => typeof v === 'number' && v > 0);
-    const maxOutputMin = validOutputs.length > 0 ? Math.min(...validOutputs) : null;
-    const maxOutputMax = validOutputs.length > 0 ? Math.max(...validOutputs) : null;
-
-    // Pick richest description available
-    const descriptions = offerList.map(off => off.description).filter(Boolean);
-    descriptions.sort((a, b) => b.length - a.length);
-    const description = descriptions.length > 0 ? descriptions[0] : null;
-
-    // Per-provider capability lookup
-    const supportsCaching = {};
-    for (const off of offerList) {
-      supportsCaching[off.providerId] = off.capabilities.includes('Prompt Caching');
-    }
-
-    return {
-      id: g.canonicalId,
-      name: offerList.find(off => off.rawModel.display_name)?.rawModel.display_name || g.canonicalId,
-      creator: g.creator,
-      description,
-      context_size: contextMin,
-      contextMin,
-      contextMax,
-      maxOutput: maxOutputMin,
-      maxOutputMin,
-      maxOutputMax,
-      tags: universalCapabilities,
-      universalCapabilities,
-      partialCapabilities,
-      offers: g.offers,
-      normalizedOffers: g.normalizedOffers,
-      supportsCaching,
-      matched: totalOffers >= 2,
-      cortecs: g.offers.cortecs || null,
-      mammouth: g.offers.mammouth || null,
-       mistral: g.offers.mistral || null,
-      edenai: g.offers.edenai || null,
-      opper: g.offers.opper || null,
-      eurouter: g.offers.eurouter || null,
-      requesty: g.offers.requesty || null,
-      alternateIdsByProvider: Object.fromEntries(
-        [...(canonicalRawIds.get(g.canonicalId) || new Map()).entries()].map(([pid, set]) => [pid, [...set].sort()])
-      )
-    };
-  }).filter(model => {
-    return getInputCostPerMillion(model) !== null && getOutputCostPerMillion(model) !== null;
-  });
 }
 
 function getOfferInputCost(providerId, offer, currency = selectedCurrency) {
@@ -1085,6 +534,12 @@ function getOfferInputCost(providerId, offer, currency = selectedCurrency) {
   if (providerId === 'requesty') {
     if (offer.input_price === undefined) return null;
     const priceUsd = offer.input_price * 1000000;
+    return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
+  }
+
+  if (providerId === 'openrouter') {
+    if (!offer.pricing || offer.pricing.prompt === undefined) return null;
+    const priceUsd = offer.pricing.prompt * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
   
@@ -1138,6 +593,12 @@ function getOfferOutputCost(providerId, offer, currency = selectedCurrency) {
   if (providerId === 'requesty') {
     if (offer.output_price === undefined) return null;
     const priceUsd = offer.output_price * 1000000;
+    return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
+  }
+
+  if (providerId === 'openrouter') {
+    if (!offer.pricing || offer.pricing.completion === undefined) return null;
+    const priceUsd = offer.pricing.completion * 1000000;
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
   
@@ -1201,6 +662,8 @@ function getOfferCacheRates(providerId, offer, currency = selectedCurrency) {
   } else if (providerId === 'requesty') {
     read = convertPerMillionRate(usdPerTokenToPerMillion(offer.cached_price), 'USD', currency);
     write = convertPerMillionRate(usdPerTokenToPerMillion(offer.caching_price), 'USD', currency);
+  } else if (providerId === 'openrouter') {
+    read = convertPerMillionRate(usdPerTokenToPerMillion(offer.pricing?.input_cache_read), 'USD', currency);
   }
 
   const baseIn = getOfferInputCost(providerId, offer, currency);
@@ -1383,17 +846,37 @@ function configureCostFilters() {
     { key: 'input', getter: getInputCostPerMillion },
     { key: 'output', getter: getOutputCostPerMillion }
   ];
-
   filters.forEach(({ key, getter }) => {
     const minInput = document.getElementById(`${key}-cost-min`);
     const maxInput = document.getElementById(`${key}-cost-max`);
     if (!minInput || !maxInput) return;
-
-    const largestCost = unifiedModels.reduce((max, model) => {
-      const cost = getter(model);
-      return typeof cost === 'number' ? Math.max(max, cost) : max;
-    }, 0);
-    const scaleMax = Math.max(largestCost, COST_LOG_MIN);
+    const prev = costFilterRanges[key];
+    let scaleMax;
+    // On currency switch, avoid scanning all models – just convert previous scale via exchangeRate
+    if (_currencySwitchPending && Number.isFinite(prev.scaleMax) && prev.scaleMax > 0 && prev.scaleMax !== Infinity) {
+      const toUSD = _lastCurrency === 'EUR' && selectedCurrency === 'USD';
+      const toEUR = _lastCurrency === 'USD' && selectedCurrency === 'EUR';
+      const factor = toUSD ? exchangeRate : toEUR ? 1 / exchangeRate : 1;
+      scaleMax = Math.max(prev.scaleMax * factor, COST_LOG_MIN);
+      const ratio = factor;
+      minInput.max = COST_SLIDER_STEPS;
+      maxInput.max = COST_SLIDER_STEPS;
+      minInput.step = 1;
+      maxInput.step = 1;
+      costFilterRanges[key] = { min: prev.min * ratio, max: prev.max * ratio, scaleMax };
+      updateCostFilterDisplay(key);
+      return;
+    }
+    const needsRecalc = !Number.isFinite(prev.scaleMax) || prev.scaleMax === Infinity;
+    if (needsRecalc) {
+      const largestCost = unifiedModels.reduce((max, model) => {
+        const cost = getter(model);
+        return typeof cost === 'number' ? Math.max(max, cost) : max;
+      }, 0);
+      scaleMax = Math.max(largestCost, COST_LOG_MIN);
+    } else {
+      scaleMax = prev.scaleMax;
+    }
     minInput.max = COST_SLIDER_STEPS;
     maxInput.max = COST_SLIDER_STEPS;
     minInput.step = 1;
@@ -1420,16 +903,32 @@ function getContextRange(modelObj) {
   };
 }
 
+let _renderId = 0;
+let _renderRaf = null;
 function applyFiltersAndRender() {
+  const myId = ++_renderId;
+  if (_renderRaf) cancelAnimationFrame(_renderRaf);
+  // Precompute per-model derived values once (friendly name, costs, context) to avoid N× repeated getters
+  const qLower = searchQuery ? searchQuery.toLowerCase() : '';
+  const inputRange = costFilterRanges.input;
+  const outputRange = costFilterRanges.output;
+  const computed = new Map(); // model -> {inputCost, outputCost, workloadCost, friendly, friendlyLower, ctx}
+  for (const m of unifiedModels) {
+    const friendly = getHumanFriendlyName(m.id || '');
+    computed.set(m, {
+      friendly,
+      friendlyLower: friendly.toLowerCase(),
+      inputCost: getInputCostPerMillion(m),
+      outputCost: getOutputCostPerMillion(m),
+      workloadCost: getWorkloadCost(m),
+      ctx: getContextRange(m)
+    });
+  }
   let filtered = unifiedModels.filter(m => {
-    // 1. Model ID filter (Search Query)
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      const cleanName = getHumanFriendlyName(m.id).toLowerCase();
-      if (!m.id.toLowerCase().includes(q) && !cleanName.includes(q)) return false;
+    const c = computed.get(m);
+    if (qLower) {
+      if (!m.id.toLowerCase().includes(qLower) && !c.friendlyLower.includes(qLower)) return false;
     }
-
-    // 2. Source / Provider Select (multi)
     if (selectedProvider.length > 0) {
       let showRow = false;
       for (const sel of selectedProvider) {
@@ -1438,94 +937,44 @@ function applyFiltersAndRender() {
       }
       if (!showRow) return false;
     }
-
-    // 3. Creator Select
     if (selectedCreator !== 'all' && m.creator !== selectedCreator) return false;
-
-    // 4. Min Context Size Filter
-    const contextRange = getContextRange(m);
     if (minContextSize > 0) {
-      // Unknown context limits should remain visible; the filter only excludes
-      // models whose known minimum is below the requested threshold.
-      if (contextRange.min && contextRange.min < minContextSize) return false;
+      if (c.ctx.min && c.ctx.min < minContextSize) return false;
     }
-
-    // 5. Best input/output price ranges
-    const inputCost = getInputCostPerMillion(m);
-    const outputCost = getOutputCostPerMillion(m);
-    if (inputCost === null || outputCost === null) return false;
-    const inputRange = costFilterRanges.input;
-    const outputRange = costFilterRanges.output;
-    if (inputCost === null
-      ? inputRange.min > 0 || inputRange.max < inputRange.scaleMax
-      : inputCost < inputRange.min || inputCost > inputRange.max) return false;
-    if (outputCost === null
-      ? outputRange.min > 0 || outputRange.max < outputRange.scaleMax
-      : outputCost < outputRange.min || outputCost > outputRange.max) return false;
-
+    if (c.inputCost === null || c.outputCost === null) return false;
+    if (c.inputCost < inputRange.min || c.inputCost > inputRange.max) return false;
+    if (c.outputCost < outputRange.min || c.outputCost > outputRange.max) return false;
     return true;
   });
 
-  // Apply Sorting
   filtered.sort((a, b) => {
+    const ca = computed.get(a), cb = computed.get(b);
     let valA, valB;
-    
     switch (currentSortColumn) {
-      case 'id':
-        // Sort by the name shown in the table, not the provider-specific ID.
-        valA = getHumanFriendlyName(a.id || '');
-        valB = getHumanFriendlyName(b.id || '');
-        break;
-      case 'creator':
-        valA = a.creator;
-        valB = b.creator;
-        break;
-      case 'context':
-        valA = getContextRange(a).min || 0;
-        valB = getContextRange(b).min || 0;
-        break;
-      case 'input':
-        valA = getInputCostPerMillion(a) ?? Infinity;
-        valB = getInputCostPerMillion(b) ?? Infinity;
-        break;
-      case 'output':
-        valA = getOutputCostPerMillion(a) ?? Infinity;
-        valB = getOutputCostPerMillion(b) ?? Infinity;
-        break;
-      case 'workload':
-        valA = getWorkloadCost(a) || Infinity;
-        valB = getWorkloadCost(b) || Infinity;
-        break;
-      default:
-        valA = a.id;
-        valB = b.id;
+      case 'id': valA = ca.friendly; valB = cb.friendly; break;
+      case 'creator': valA = a.creator; valB = b.creator; break;
+      case 'context': valA = (ca.ctx || getContextRange(a)).min || 0; valB = (cb.ctx || getContextRange(b)).min || 0; break;
+      case 'input': valA = ca.inputCost ?? Infinity; valB = cb.inputCost ?? Infinity; break;
+      case 'output': valA = ca.outputCost ?? Infinity; valB = cb.outputCost ?? Infinity; break;
+      case 'workload': valA = ca.workloadCost || Infinity; valB = cb.workloadCost || Infinity; break;
+      default: valA = a.id; valB = b.id;
     }
-
     if (typeof valA === 'string') {
-      const comparison = valA.localeCompare(valB, undefined, { sensitivity: 'base' });
-      if (comparison !== 0) {
-        return currentSortDirection === 'asc' ? comparison : -comparison;
-      }
-
-      // Keep models with identical display names deterministic.
-      const idComparison = String(a.id || '').localeCompare(String(b.id || ''), undefined, { sensitivity: 'base' });
-      return currentSortDirection === 'asc' ? idComparison : -idComparison;
-    } else {
-      return currentSortDirection === 'asc' 
-        ? valA - valB 
-        : valB - valA;
+      const cmp = valA.localeCompare(valB, undefined, { sensitivity: 'base' });
+      if (cmp !== 0) return currentSortDirection === 'asc' ? cmp : -cmp;
+      const idCmp = String(a.id || '').localeCompare(String(b.id || ''), undefined, { sensitivity: 'base' });
+      return currentSortDirection === 'asc' ? idCmp : -idCmp;
     }
+    return currentSortDirection === 'asc' ? valA - valB : valB - valA;
   });
 
   const countDisplay = document.getElementById('model-count-display');
-  if (countDisplay) {
-    countDisplay.textContent = `${filtered.length}/${unifiedModels.length} shown`;
-  }
-
+  if (countDisplay) countDisplay.textContent = `${filtered.length}/${unifiedModels.length} shown`;
   const totalDisplay = document.getElementById('model-total-display');
   if (totalDisplay) totalDisplay.textContent = unifiedModels.length;
 
-  renderTable(filtered);
+  // Chunked render: first paint quickly, rest in rAF batches to keep UI responsive on currency switch
+  renderTableChunked(filtered, computed, myId);
 }
 
 // --- PROMPT CACHING CONTROLS ---
@@ -1588,128 +1037,81 @@ function formatCurrency(val, currency = selectedCurrency) {
   const sym = currency === 'USD' ? '$' : '€';
   if (val === null || val === undefined || Number.isNaN(val)) return 'N/A';
   if (val === 0) return `${sym}0.00`;
-  
-  if (val < 0.01) {
-    return `${sym}${val.toFixed(4)}`;
-  }
-  return `${sym}${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (val < 0.01) return `${sym}${val.toFixed(4)}`;
+  return `${sym}${_numberFmt.format(val)}`;
 }
 
-function renderTable(models) {
-  const tbody = document.getElementById('models-table-body');
-  if (!tbody) return;
-
-  if (models.length === 0) {
-    const isInitialLoad = (typeof unifiedModels === 'undefined' || unifiedModels.length === 0);
-    if (isInitialLoad) return;
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="8">
-          <div class="empty-state">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            <p>No models match your filter criteria.</p>
-          </div>
-        </td>
-      </tr>
-    `;
-    return;
-  }
-
-  tbody.innerHTML = models.map(m => {
-    const inputCost = getInputCostPerMillion(m);
-    const outputCost = getOutputCostPerMillion(m);
-
-    // Minimum context format for the currently selected providers.
-    const contextRange = getContextRange(m);
-    let contextStr = '<span style="color: var(--text-dark);">Unknown</span>';
-    if (contextRange.min) {
-      if (contextRange.max !== null && contextRange.min < contextRange.max) {
-        const tooltip = `Minimum Context Window: ${contextRange.min.toLocaleString()} tokens\n(Range across ${contextRange.count} providers: ${contextRange.min.toLocaleString()} – ${contextRange.max.toLocaleString()} tokens)`;
-        contextStr = `<span title="${tooltip}" style="cursor: help; border-bottom: 1px dotted;">${contextRange.min.toLocaleString()}</span>`;
-      } else {
-        contextStr = contextRange.min.toLocaleString();
-      }
+function buildRowHtml(m, precomputed) {
+  const inputCost = precomputed ? precomputed.inputCost : getInputCostPerMillion(m);
+  const outputCost = precomputed ? precomputed.outputCost : getOutputCostPerMillion(m);
+  const workloadCost = precomputed ? precomputed.workloadCost : getWorkloadCost(m);
+  const contextRange = precomputed && precomputed.ctx ? precomputed.ctx : getContextRange(m);
+  let contextStr = '<span style="color: var(--text-dark);">Unknown</span>';
+  if (contextRange.min) {
+    if (contextRange.max !== null && contextRange.min < contextRange.max) {
+      const tooltip = `Minimum Context Window: ${_intFmt.format(contextRange.min)} tokens\n(Range across ${contextRange.count} providers: ${_intFmt.format(contextRange.min)} – ${_intFmt.format(contextRange.max)} tokens)`;
+      contextStr = `<span title="${tooltip}" style="cursor: help; border-bottom: 1px dotted;">${_intFmt.format(contextRange.min)}</span>`;
+    } else {
+      contextStr = _intFmt.format(contextRange.min);
     }
-
-    // Provider badges list (respects the caching visibility filter)
-    const availableProvidersHtml = getActiveOffers(m).map(([providerId]) => {
+  }
+  const availableProvidersHtml = getActiveOffers(m).map(([providerId]) => {
+    const providerName = PROVIDER_DISPLAY_NAMES[providerId] || providerId;
+    return `<span class="badge ${PROVIDER_BADGE_CLASS}" style="margin-right: 4px; font-size: 0.7rem;">${providerName}</span>`;
+  }).join('');
+  const bestDetails = getBestProviderDetails(m);
+  let bestProviderHtml = '<span style="color: var(--text-dark);">N/A</span>';
+  if (bestDetails) {
+    const allOfferCosts = getActiveOffers(m)
+      .map(([pid, offer]) => {
+        const ic = getOfferEffectiveInputCost(pid, offer);
+        const oc = getOfferOutputCost(pid, offer);
+        if (ic === null || oc === null) return null;
+        return { pid, name: PROVIDER_DISPLAY_NAMES[pid] || pid, total: ic + oc };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.total - b.total);
+    const bestTotal = allOfferCosts.length ? allOfferCosts[0].total : null;
+    const tooltipLines = allOfferCosts.map(o => {
+      if (!areCostsEqual(o.total, bestTotal)) {
+        const mult = (o.total / bestTotal).toFixed(1);
+        return `${o.name} ${mult}×`;
+      }
+      return `${o.name} (lowest listed price)`;
+    });
+    const tooltipAttr = tooltipLines.length > 1
+      ? ` title="All providers (sorted by cost):\n${tooltipLines.join('\n')}"`
+      : '';
+    const lowestProviderBadges = bestDetails.providerIds.map(providerId => {
       const providerName = PROVIDER_DISPLAY_NAMES[providerId] || providerId;
       return `<span class="badge ${PROVIDER_BADGE_CLASS}" style="margin-right: 4px; font-size: 0.7rem;">${providerName}</span>`;
     }).join('');
-
-    // Best Provider details column — same per-offer basis as the workload cost
-    const bestDetails = getBestProviderDetails(m);
-    let bestProviderHtml = '<span style="color: var(--text-dark);">N/A</span>';
-    if (bestDetails) {
-      const allOfferCosts = getActiveOffers(m)
-        .map(([pid, offer]) => {
-          const ic = getOfferEffectiveInputCost(pid, offer);
-          const oc = getOfferOutputCost(pid, offer);
-          if (ic === null || oc === null) return null;
-          return { pid, name: PROVIDER_DISPLAY_NAMES[pid] || pid, total: ic + oc };
-        })
-        .filter(Boolean)
-        .sort((a, b) => a.total - b.total);
-      const bestTotal = allOfferCosts.length ? allOfferCosts[0].total : null;
-      const tooltipLines = allOfferCosts.map(o => {
-        if (!areCostsEqual(o.total, bestTotal)) {
-          const mult = (o.total / bestTotal).toFixed(1);
-          return `${o.name} ${mult}×`;
-        }
-        return `${o.name} (lowest listed price)`;
-      });
-      const tooltipAttr = tooltipLines.length > 1
-        ? ` title="All providers (sorted by cost):\n${tooltipLines.join('\n')}"`
-        : '';
-      const lowestProviderBadges = bestDetails.providerIds.map(providerId => {
-        const providerName = PROVIDER_DISPLAY_NAMES[providerId] || providerId;
-        return `<span class="badge ${PROVIDER_BADGE_CLASS}" style="margin-right: 4px; font-size: 0.7rem;">${providerName}</span>`;
-      }).join('');
-      bestProviderHtml = `<span style="cursor: help;"${tooltipAttr}>${lowestProviderBadges}</span>`;
-    }
-
-    // Cost (your workload) column — cache-adjusted when the math toggle is on
-    const workloadCost = getWorkloadCost(m);
-    const workloadFmt = workloadCost === null ? 'N/A' : formatCurrency(workloadCost);
-    const cacheActive = cacheAwareCost && cachedInputShare > 0;
-    const reuseLabel = Number.isFinite(cacheReuseRounds) ? `${cacheReuseRounds}×` : 'steady state';
-    let workloadTooltip;
-    if (workloadCost === null) {
-      workloadTooltip = 'Pricing unavailable';
-    } else if (cacheActive) {
-      const bestOffer = getBestWorkloadOffer(m);
-      workloadTooltip =
-        `Cache-adjusted via ${CACHE_FORMULA_TEXT}\n` +
-        `Winning offer: ${formatCurrency(bestOffer.inEff)} eff. input (${Math.round(cachedInputShare * 100)}% cached, ${reuseLabel}) + ${formatCurrency(bestOffer.outRate)} output per 1M\n` +
-        `(${workloadInputTokens.toLocaleString()} in + ${workloadOutputTokens.toLocaleString()} out) ÷ 1,000,000`;
-    } else {
-      workloadTooltip =
-        `Lowest-priced offer: ${formatCurrency(inputCost)} input + ${formatCurrency(outputCost)} output per 1M\n` +
-        `(${workloadInputTokens.toLocaleString()} in + ${workloadOutputTokens.toLocaleString()} out) × rate ÷ 1,000,000`;
-    }
-    const workloadHtml = `<span title="${workloadTooltip}" style="cursor: help; border-bottom: 1px dotted;">${workloadFmt}</span>`;
-
-    // Strict Universal Capabilities on Table Row
-    const tagsHtml = m.universalCapabilities && m.universalCapabilities.length > 0
-      ? m.universalCapabilities.slice(0, 4).map(t => `<span class="tag-badge" title="Universal capability: supported by 100% of providers offering this model">${t}</span>`).join('')
-      : '';
-
-    return `
+    bestProviderHtml = `<span style="cursor: help;"${tooltipAttr}>${lowestProviderBadges}</span>`;
+  }
+  const workloadFmt = workloadCost === null ? 'N/A' : formatCurrency(workloadCost);
+  const cacheActive = cacheAwareCost && cachedInputShare > 0;
+  const reuseLabel = Number.isFinite(cacheReuseRounds) ? `${cacheReuseRounds}×` : 'steady state';
+  let workloadTooltip;
+  if (workloadCost === null) {
+    workloadTooltip = 'Pricing unavailable';
+  } else if (cacheActive) {
+    const bestOffer = getBestWorkloadOffer(m);
+    workloadTooltip =
+      `Cache-adjusted via ${CACHE_FORMULA_TEXT}\n` +
+      `Winning offer: ${formatCurrency(bestOffer.inEff)} eff. input (${Math.round(cachedInputShare * 100)}% cached, ${reuseLabel}) + ${formatCurrency(bestOffer.outRate)} output per 1M\n` +
+      `(${_intFmt.format(workloadInputTokens)} in + ${_intFmt.format(workloadOutputTokens)} out) ÷ 1,000,000`;
+  } else {
+    workloadTooltip =
+      `Lowest-priced offer: ${formatCurrency(inputCost)} input + ${formatCurrency(outputCost)} output per 1M\n` +
+      `(${_intFmt.format(workloadInputTokens)} in + ${_intFmt.format(workloadOutputTokens)} out) × rate ÷ 1,000,000`;
+  }
+  const workloadHtml = `<span title="${workloadTooltip}" style="cursor: help; border-bottom: 1px dotted;">${workloadFmt}</span>`;
+  const friendly = precomputed ? precomputed.friendly : getHumanFriendlyName(m.id);
+  return `
       <tr class="clickable-row" onclick="openComparison('${m.id}')" title="Click to view details and provider comparison">
-        <td>
-          <div class="model-name">${getHumanFriendlyName(m.id)}</div>
-          <div class="tag-list" style="margin-top: 4px;">
-            ${tagsHtml}
-          </div>
-        </td>
-        <td>
-          <span style="font-weight: 500; font-size: 0.85rem;">${m.creator}</span>
-        </td>
-        <td>
-          <div style="display: flex; flex-wrap: wrap; gap: 4px;">
-            ${availableProvidersHtml}
-          </div>
-        </td>
+        <td><div class="model-name">${friendly}</div></td>
+        <td><span style="font-weight: 500; font-size: 0.85rem;">${m.creator}</span></td>
+        <td><div style="display: flex; flex-wrap: wrap; gap: 4px;">${availableProvidersHtml}</div></td>
         <td style="font-family: var(--font-mono);">${contextStr}</td>
         <td style="font-family: var(--font-mono);">${formatCurrency(inputCost)}</td>
         <td style="font-family: var(--font-mono);">${formatCurrency(outputCost)}</td>
@@ -1717,7 +1119,50 @@ function renderTable(models) {
         <td>${bestProviderHtml}</td>
       </tr>
     `;
-  }).join('');
+}
+
+function renderTable(models) {
+  const tbody = document.getElementById('models-table-body');
+  if (!tbody) return;
+  if (models.length === 0) {
+    const isInitialLoad = (typeof unifiedModels === 'undefined' || unifiedModels.length === 0);
+    if (isInitialLoad) return;
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><p>No models match your filter criteria.</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = models.map(m => buildRowHtml(m, null)).join('');
+}
+
+function renderTableChunked(models, computed, renderId) {
+  const tbody = document.getElementById('models-table-body');
+  if (!tbody) return;
+  if (models.length === 0) {
+    const isInitialLoad = (typeof unifiedModels === 'undefined' || unifiedModels.length === 0);
+    if (isInitialLoad) return;
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><p>No models match your filter criteria.</p></div></td></tr>`;
+    return;
+  }
+  const CHUNK = 60;
+  let idx = 0;
+  // Render first chunk synchronously for perceived speed
+  const firstEnd = Math.min(CHUNK, models.length);
+  let html = '';
+  for (let i = 0; i < firstEnd; i++) html += buildRowHtml(models[i], computed.get(models[i]));
+  tbody.innerHTML = html;
+  idx = firstEnd;
+  if (idx >= models.length) return;
+  function appendChunk() {
+    if (renderId !== _renderId) return; // cancelled by newer render
+    const end = Math.min(idx + CHUNK, models.length);
+    let chunkHtml = '';
+    for (let i = idx; i < end; i++) chunkHtml += buildRowHtml(models[i], computed.get(models[i]));
+    tbody.insertAdjacentHTML('beforeend', chunkHtml);
+    idx = end;
+    if (idx < models.length) {
+      _renderRaf = requestAnimationFrame(appendChunk);
+    }
+  }
+  _renderRaf = requestAnimationFrame(appendChunk);
 }
 
 // --- MODAL POPUP SPLIT DETAILS ---
@@ -1772,8 +1217,98 @@ function getNativeCacheStrings(providerId, rawOffer) {
   } else if (providerId === 'requesty') {
     if (positiveRate(rawOffer.cached_price) !== null) out.read = `$${(rawOffer.cached_price * 1000000).toFixed(2)} USD`;
     if (positiveRate(rawOffer.caching_price) !== null) out.write = `$${(rawOffer.caching_price * 1000000).toFixed(2)} USD`;
+  } else if (providerId === 'openrouter') {
+    if (positiveRate(rawOffer.pricing?.input_cache_read) !== null) out.read = `$${(rawOffer.pricing.input_cache_read * 1000000).toFixed(4)} USD`;
   }
   return out;
+}
+
+// Shared per-offer computation for detail-modal cards (EU providers and the
+// non-EU reference offer alike). `normOffer` comes from the precomputed
+// normalizedOffers when available, otherwise it is derived on the fly.
+// `sovereignty` is precomputed at generation time (see unify.js).
+function buildModalOffer(providerId, rawOffer, normOffer, sovereignty) {
+  const pricingProviderId = providerId === 'mistral-regional' ? 'mistral' : providerId;
+  const inCost = getOfferInputCost(pricingProviderId, rawOffer, selectedCurrency);
+  const outCost = getOfferOutputCost(pricingProviderId, rawOffer, selectedCurrency);
+  const cacheRates = getOfferCacheRates(pricingProviderId, rawOffer, selectedCurrency);
+  const cacheSupportState = getOfferCacheSupport(pricingProviderId, rawOffer);
+  const nativeCache = getNativeCacheStrings(pricingProviderId, rawOffer);
+
+  let origIn = '', origOut = '';
+  if (providerId === 'mammouth' && rawOffer && rawOffer.model_info) {
+    if (typeof rawOffer.model_info.input_cost_per_token === 'number') {
+      origIn = `$${(rawOffer.model_info.input_cost_per_token * 1000000).toFixed(2)} USD`;
+    }
+    if (typeof rawOffer.model_info.output_cost_per_token === 'number') {
+      origOut = `$${(rawOffer.model_info.output_cost_per_token * 1000000).toFixed(2)} USD`;
+    }
+  } else if (providerId === 'cortecs' && rawOffer && rawOffer.pricing) {
+    if (typeof rawOffer.pricing.input_token === 'number') {
+      origIn = `€${rawOffer.pricing.input_token.toFixed(2)} EUR`;
+    }
+    if (typeof rawOffer.pricing.output_token === 'number') {
+      origOut = `€${rawOffer.pricing.output_token.toFixed(2)} EUR`;
+    }
+  } else if (pricingProviderId === 'mistral' && rawOffer && rawOffer.pricing) {
+    if (typeof rawOffer.pricing.input_token === 'number') {
+      origIn = `$${rawOffer.pricing.input_token.toFixed(2)} USD`;
+    }
+    if (typeof rawOffer.pricing.output_token === 'number') {
+      origOut = `$${rawOffer.pricing.output_token.toFixed(2)} USD`;
+    }
+  } else if (providerId === 'edenai' && rawOffer && rawOffer.pricing) {
+    if (typeof rawOffer.pricing.input_cost_per_token === 'number') {
+      origIn = `$${(rawOffer.pricing.input_cost_per_token * 1000000).toFixed(2)} USD`;
+    }
+    if (typeof rawOffer.pricing.output_cost_per_token === 'number') {
+      origOut = `$${(rawOffer.pricing.output_cost_per_token * 1000000).toFixed(2)} USD`;
+    }
+  } else if (providerId === 'opper' && rawOffer && rawOffer.pricing) {
+    const inVal = Array.isArray(rawOffer.pricing.input) ? rawOffer.pricing.input[0] : rawOffer.pricing.input;
+    const outVal = Array.isArray(rawOffer.pricing.output) ? rawOffer.pricing.output[0] : rawOffer.pricing.output;
+    if (typeof inVal === 'number') origIn = `$${inVal.toFixed(2)} USD`;
+    if (typeof outVal === 'number') origOut = `$${outVal.toFixed(2)} USD`;
+  } else if (providerId === 'eurouter' && rawOffer && rawOffer.pricing) {
+    const origCur = rawOffer.pricing.currency || 'EUR';
+    const sym = origCur === 'USD' ? '$' : '€';
+    if (rawOffer.pricing.prompt !== undefined && rawOffer.pricing.prompt !== null && !isNaN(parseFloat(rawOffer.pricing.prompt))) {
+      origIn = `${sym}${(parseFloat(rawOffer.pricing.prompt) * 1000000).toFixed(2)} ${origCur}`;
+    }
+    if (rawOffer.pricing.completion !== undefined && rawOffer.pricing.completion !== null && !isNaN(parseFloat(rawOffer.pricing.completion))) {
+      origOut = `${sym}${(parseFloat(rawOffer.pricing.completion) * 1000000).toFixed(2)} ${origCur}`;
+    }
+  } else if (providerId === 'requesty' && rawOffer) {
+    if (typeof rawOffer.input_price === 'number') {
+      origIn = `$${(rawOffer.input_price * 1000000).toFixed(2)} USD`;
+    }
+    if (typeof rawOffer.output_price === 'number') {
+      origOut = `$${(rawOffer.output_price * 1000000).toFixed(2)} USD`;
+    }
+  } else if (providerId === 'openrouter' && rawOffer && rawOffer.pricing) {
+    if (typeof rawOffer.pricing.prompt === 'number') {
+      origIn = `$${(rawOffer.pricing.prompt * 1000000).toFixed(2)} USD`;
+    }
+    if (typeof rawOffer.pricing.completion === 'number') {
+      origOut = `$${(rawOffer.pricing.completion * 1000000).toFixed(2)} USD`;
+    }
+  }
+
+  return {
+    providerId,
+    providerName: normOffer.providerName,
+    inCost,
+    outCost,
+    cacheRates,
+    cacheSupportState,
+    nativeCache,
+    totalCost: inCost !== null && outCost !== null ? inCost + outCost : Infinity,
+    origIn,
+    origOut,
+    normOffer,
+    offer: rawOffer,
+    sovereignty
+  };
 }
 
 function openModalWithSelection(modelObj) {
@@ -1787,88 +1322,49 @@ function openModalWithSelection(modelObj) {
   const offersList = [];
   // Respect the caching visibility filter so the modal matches the table's offers.
   for (const [providerId, rawOffer] of getActiveOffers(modelObj)) {
-    const normOffer = (modelObj.normalizedOffers && modelObj.normalizedOffers[providerId]) || normalizeOffer(providerId, rawOffer);
-    const pricingProviderId = providerId === 'mistral-regional' ? 'mistral' : providerId;
-    const inCost = getOfferInputCost(pricingProviderId, rawOffer, selectedCurrency);
-    const outCost = getOfferOutputCost(pricingProviderId, rawOffer, selectedCurrency);
-    const cacheRates = getOfferCacheRates(pricingProviderId, rawOffer, selectedCurrency);
-    const cacheSupportState = getOfferCacheSupport(pricingProviderId, rawOffer);
-    const nativeCache = getNativeCacheStrings(pricingProviderId, rawOffer);
-    
-    let origIn = '', origOut = '';
-    if (providerId === 'mammouth' && rawOffer && rawOffer.model_info) {
-      if (typeof rawOffer.model_info.input_cost_per_token === 'number') {
-        origIn = `$${(rawOffer.model_info.input_cost_per_token * 1000000).toFixed(2)} USD`;
-      }
-      if (typeof rawOffer.model_info.output_cost_per_token === 'number') {
-        origOut = `$${(rawOffer.model_info.output_cost_per_token * 1000000).toFixed(2)} USD`;
-      }
-    } else if (providerId === 'cortecs' && rawOffer && rawOffer.pricing) {
-      if (typeof rawOffer.pricing.input_token === 'number') {
-        origIn = `€${rawOffer.pricing.input_token.toFixed(2)} EUR`;
-      }
-      if (typeof rawOffer.pricing.output_token === 'number') {
-        origOut = `€${rawOffer.pricing.output_token.toFixed(2)} EUR`;
-      }
-    } else if (pricingProviderId === 'mistral' && rawOffer && rawOffer.pricing) {
-      if (typeof rawOffer.pricing.input_token === 'number') {
-        origIn = `$${rawOffer.pricing.input_token.toFixed(2)} USD`;
-      }
-      if (typeof rawOffer.pricing.output_token === 'number') {
-        origOut = `$${rawOffer.pricing.output_token.toFixed(2)} USD`;
-      }
-    } else if (providerId === 'edenai' && rawOffer && rawOffer.pricing) {
-      if (typeof rawOffer.pricing.input_cost_per_token === 'number') {
-        origIn = `$${(rawOffer.pricing.input_cost_per_token * 1000000).toFixed(2)} USD`;
-      }
-      if (typeof rawOffer.pricing.output_cost_per_token === 'number') {
-        origOut = `$${(rawOffer.pricing.output_cost_per_token * 1000000).toFixed(2)} USD`;
-      }
-    } else if (providerId === 'opper' && rawOffer && rawOffer.pricing) {
-      const inVal = Array.isArray(rawOffer.pricing.input) ? rawOffer.pricing.input[0] : rawOffer.pricing.input;
-      const outVal = Array.isArray(rawOffer.pricing.output) ? rawOffer.pricing.output[0] : rawOffer.pricing.output;
-      if (typeof inVal === 'number') origIn = `$${inVal.toFixed(2)} USD`;
-      if (typeof outVal === 'number') origOut = `$${outVal.toFixed(2)} USD`;
-    } else if (providerId === 'eurouter' && rawOffer && rawOffer.pricing) {
-      const origCur = rawOffer.pricing.currency || 'EUR';
-      const sym = origCur === 'USD' ? '$' : '€';
-      if (rawOffer.pricing.prompt !== undefined && rawOffer.pricing.prompt !== null && !isNaN(parseFloat(rawOffer.pricing.prompt))) {
-        origIn = `${sym}${(parseFloat(rawOffer.pricing.prompt) * 1000000).toFixed(2)} ${origCur}`;
-      }
-      if (rawOffer.pricing.completion !== undefined && rawOffer.pricing.completion !== null && !isNaN(parseFloat(rawOffer.pricing.completion))) {
-        origOut = `${sym}${(parseFloat(rawOffer.pricing.completion) * 1000000).toFixed(2)} ${origCur}`;
-      }
-    } else if (providerId === 'requesty' && rawOffer) {
-      if (typeof rawOffer.input_price === 'number') {
-        origIn = `$${(rawOffer.input_price * 1000000).toFixed(2)} USD`;
-      }
-      if (typeof rawOffer.output_price === 'number') {
-        origOut = `$${(rawOffer.output_price * 1000000).toFixed(2)} USD`;
-      }
-    }
+    const normOffer = (modelObj.normalizedOffers && modelObj.normalizedOffers[providerId]) || EuroUnify.normalizeOffer(providerId, rawOffer);
+    const sovereignty = (modelObj.sovereigntyByProvider || {})[providerId] || {};
+    offersList.push(buildModalOffer(providerId, rawOffer, normOffer, sovereignty));
+  }
 
-    offersList.push({
-      providerId,
-      providerName: normOffer.providerName,
-      inCost,
-      outCost,
-      cacheRates,
-      cacheSupportState,
-      nativeCache,
-      totalCost: inCost !== null && outCost !== null ? inCost + outCost : Infinity,
-      origIn,
-      origOut,
-      normOffer,
-      offer: rawOffer
-    });
+  // Non-EU reference offer (OpenRouter), shown greyed out below the EU cards.
+  let benchmarkOfferEntry = null;
+  if (modelObj.benchmarkOffer) {
+    benchmarkOfferEntry = buildModalOffer(
+      BENCHMARK_PROVIDER_ID,
+      modelObj.benchmarkOffer,
+      EuroUnify.normalizeOffer(BENCHMARK_PROVIDER_ID, modelObj.benchmarkOffer),
+      modelObj.benchmarkSovereignty || {}
+    );
   }
 
   offersList.sort((a, b) => a.totalCost - b.totalCost);
 
-  // 1. Overview Section: Description + Consensus Guarantee Bar
-  const descHtml = modelObj.description 
-    ? `<div class="modal-model-desc">${modelObj.description}</div>`
+  // 1. Overview Section: Description + Consensus Guarantee Bar (+ models.dev enrichment)
+  const descHtml = (modelObj.modelsDev && modelObj.modelsDev.description) || modelObj.description
+    ? `<div class="modal-model-desc">${escapeHtml((modelObj.modelsDev && modelObj.modelsDev.description) || modelObj.description)}</div>`
     : '';
+  const dev = modelObj.modelsDev || null;
+  const devHtml = dev ? `
+      <div class="modal-modelsdev" style="margin-top:10px; padding:10px; background:rgba(255,255,255,0.02); border:1px solid var(--border-color); border-radius:8px; display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.75rem;">
+        <div><span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Lab</span><br><span style="color:var(--text-main); font-weight:600;">${escapeHtml(dev.lab || modelObj.creator)}</span> ${dev.family ? `<span style="color:var(--text-muted);">· ${escapeHtml(dev.family)}</span>` : ''}</div>
+        <div><span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Release</span><br><span style="color:var(--text-main);">${dev.release_date ? escapeHtml(dev.release_date) : '—'}${dev.knowledge ? ` <span title="Knowledge cutoff" style="color:var(--text-muted);"> (cutoff ${escapeHtml(dev.knowledge)})</span>` : ''}</span></div>
+        <div><span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Context / Output</span><br><span style="color:var(--text-main); font-family:var(--font-mono);">${dev.context ? dev.context.toLocaleString() : '—'} / ${dev.output ? dev.output.toLocaleString() : '—'}</span> <span style="color:var(--text-muted); font-size:0.68rem;">tokens</span></div>
+        <div><span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Weights</span><br>${dev.open_weights === true ? `<span style="color:var(--savings-color);">✓ Open</span>` : dev.open_weights === false ? `<span>✗ Closed</span>` : `<span style="color:var(--text-muted);">?</span>`} ${Array.isArray(dev.weights) && dev.weights.length ? dev.weights.map(w => `<a href="${escapeHtml(w.url)}" target="_blank" rel="noopener" style="margin-left:6px; color:var(--eu-yellow); text-decoration:underline; font-size:0.68rem;">${escapeHtml(w.label || 'weights')}</a>`).join('') : ''}</div>
+        <div style="grid-column:1/-1; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+          <span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700; margin-right:4px;">Input types</span>
+          ${dev.modalities && Array.isArray(dev.modalities.input) ? dev.modalities.input.map(m => `<span class="badge" style="font-size:0.68rem; border:1px solid var(--border-color);">${escapeHtml(m)}</span>`).join('') : '<span style="color:var(--text-muted);">—</span>'}
+          <span style="margin-left:8px; color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700; margin-right:4px;">Output</span>
+          ${dev.modalities && Array.isArray(dev.modalities.output) ? dev.modalities.output.map(m => `<span class="badge" style="font-size:0.68rem; border:1px solid var(--border-color);">${escapeHtml(m)}</span>`).join('') : '<span style="color:var(--text-muted);">—</span>'}
+        </div>
+        <div style="grid-column:1/-1; display:flex; flex-wrap:wrap; gap:4px;">
+          <span class="badge" style="font-size:0.68rem; border:1px solid var(--border-color); ${dev.reasoning ? 'color:var(--savings-color); border-color:var(--savings-color);' : 'color:var(--text-muted);'}">${dev.reasoning ? '✓' : dev.reasoning === false ? '—' : '?'} Reasoning</span>
+          <span class="badge" style="font-size:0.68rem; border:1px solid var(--border-color); ${dev.tool_call ? 'color:var(--savings-color); border-color:var(--savings-color);' : 'color:var(--text-muted);'}">${dev.tool_call ? '✓' : dev.tool_call === false ? '—' : '?'} Tool Call</span>
+          <span class="badge" style="font-size:0.68rem; border:1px solid var(--border-color); ${dev.structured_output ? 'color:var(--savings-color); border-color:var(--savings-color);' : 'color:var(--text-muted);'}">${dev.structured_output ? '✓' : dev.structured_output === false ? '—' : '?'} Structured</span>
+          <span style="margin-left:auto; font-size:0.62rem; color:var(--text-dark);">via <a href="https://models.dev" target="_blank" rel="noopener" style="color:var(--text-muted); text-decoration:underline;">models.dev</a> · ${dev.lab}/${modelObj.id}</span>
+        </div>
+      </div>
+  ` : '';
 
   const guaranteedContextStr = modelObj.contextMin 
     ? (modelObj.contextMin < modelObj.contextMax ? `${modelObj.contextMin.toLocaleString()} tokens (up to ${modelObj.contextMax.toLocaleString()})` : `${modelObj.contextMin.toLocaleString()} tokens`)
@@ -1889,10 +1385,11 @@ function openModalWithSelection(modelObj) {
   const overviewHtml = `
     <div class="modal-overview-section">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-        <span style="font-size:0.75rem; color:var(--text-dark); text-transform:uppercase; font-weight:800; letter-spacing:0.04em;">Creator: <span style="color:var(--text-main);">${modelObj.creator}</span></span>
+        <span style="font-size:0.75rem; color:var(--text-dark); text-transform:uppercase; font-weight:800; letter-spacing:0.04em;">Creator: <span style="color:var(--text-main);">${modelObj.creator}</span>${dev ? ` <span style="color:var(--text-muted); font-weight:400;">· ${escapeHtml(dev.name)}</span>` : ''}</span>
         <span style="font-size:0.72rem; color:var(--text-muted); background:rgba(255,255,255,0.04); padding:2px 8px; border-radius:4px; border:1px solid var(--border-color);">${offersList.length} Active European Offer${offersList.length > 1 ? 's' : ''}</span>
       </div>
       ${descHtml}
+      ${devHtml}
       <div class="modal-consensus-bar">
         <div class="consensus-metric-group">
           <div class="consensus-metric">
@@ -1912,10 +1409,14 @@ function openModalWithSelection(modelObj) {
     </div>
   `;
 
-  // 2. Provider Comparison Cards Grid
-  const cardsHtml = offersList.map((off, idx) => {
+  // 2. Provider Comparison Cards Grid (+ optional greyed-out non-EU reference card)
+  const renderProviderCard = (off, idx, isBenchmark) => {
     const badgeClass = PROVIDER_BADGE_CLASS;
-    const cardStyle = 'background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color);';
+    // Benchmark cards get their faded look from CSS classes; emitting the shared
+    // inline background/border here would override those class rules.
+    const cardStyle = isBenchmark
+      ? ''
+      : 'background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color);';
 
     // Provider Capabilities Checklist
     const capChecklistHtml = STANDARD_CAPABILITIES.map(cap => {
@@ -1970,38 +1471,132 @@ function openModalWithSelection(modelObj) {
       `;
     }
 
-    // Infrastructure / EU Host Badges
-    const infra = off.normOffer.infrastructure || {};
-    const infraItems = [];
-    if (infra.hosts && Array.isArray(infra.hosts) && infra.hosts.length > 0) {
-      const formattedHosts = infra.hosts.map(h => {
-        if (!h) return '';
-        const str = typeof h === 'string' ? h : (h.name || h.id || h.provider || String(h));
-        return str ? (str.charAt(0).toUpperCase() + str.slice(1)) : '';
-      }).filter(Boolean);
-      if (formattedHosts.length > 0) {
-        infraItems.push(`EU Hosts: ${formattedHosts.join(', ')}`);
-      }
-    }
-    if (infra.regions && Array.isArray(infra.regions) && infra.regions.length > 0) {
-      const formattedRegions = infra.regions.map(r => {
-        if (!r) return '';
-        return typeof r === 'string' ? r : (r.name || r.code || r.region || String(r));
-      }).filter(Boolean);
-      if (formattedRegions.length > 0) {
-        infraItems.push(`Region: ${formattedRegions.join(', ')}`);
-      }
-    }
-    if (infra.zeroRetention) {
-      infraItems.push(`🛡 0-Day Retention`);
-    }
-    if (infra.noTraining) {
-      infraItems.push(`🔒 No Training`);
+    // Data sovereignty footer: fixed tri-state rows (jurisdiction, retention,
+    // training, hosting, inference, routing) — hosting vs inference split per user request.
+    // Unknown stays visible — it is never filled in or dropped. Scalar answers
+    // are precomputed per offer; narrative details merge from SOVEREIGNTY_META.
+    const sov = off.sovereignty || {};
+    const sovMeta = (typeof SOVEREIGNTY_META !== 'undefined' && SOVEREIGNTY_META)
+      ? SOVEREIGNTY_META[off.providerId === 'mistral-regional' ? 'mistral' : off.providerId] || {}
+      : {};
+    const sovTitle = (key, extra) => {
+      const metaBlock = key === 'jurisdiction' ? sovMeta.jurisdiction : sovMeta[key];
+      const parts = [];
+      if (extra) parts.push(extra);
+      if (sov.od && sov.od[key]) parts.push(sov.od[key]);
+      if (metaBlock && metaBlock.detail) parts.push(metaBlock.detail);
+      if (metaBlock && metaBlock.source) parts.push(`Source: ${metaBlock.source}`);
+      return escapeHtml(parts.join(' '));
+    };
+    const pos = 'color:var(--savings-color);';
+    const unk = 'color:var(--text-muted);';
+
+    let jurisdictionVal;
+    if (sovMeta.jurisdiction) {
+      const countryFlag = flagEmoji(sovMeta.jurisdiction.code);
+      const flags = sovMeta.jurisdiction.inEu ? `${countryFlag} 🇪🇺` : countryFlag;
+      jurisdictionVal = `<span style="${pos}" title="${sovTitle('jurisdiction')}">${flags} ${escapeHtml(sovMeta.jurisdiction.country)}</span>`;
+    } else {
+      jurisdictionVal = `<span style="${unk}">? Unknown</span>`;
     }
 
-    const infraHtml = infraItems.length > 0
-      ? `<div style="font-size:0.68rem; color:var(--text-muted); background:rgba(255,255,255,0.03); padding:4px 8px; border-radius:4px; border:1px solid var(--border-color); margin-top:4px;">${infraItems.join(' • ')}</div>`
+    let retentionVal;
+    if (sov.zeroRetention === true) {
+      retentionVal = `<span style="${pos}">✓ Zero-day</span>`;
+    } else if (sov.zeroRetention === false) {
+      retentionVal = `<span>✗ Retained${Number.isFinite(sov.retentionDays) && sov.retentionDays > 0 ? ` ≤ ${sov.retentionDays}d` : ''}</span>`;
+    } else {
+      retentionVal = `<span style="${unk}">? Unknown</span>`;
+    }
+
+    let trainingVal;
+    if (sov.training === false) {
+      trainingVal = `<span style="${pos}">✓ No</span>`;
+    } else if (sov.training === true) {
+      trainingVal = `<span title="Depends on the routed backend; check the provider's policy.">✗ Possible</span>`;
+    } else {
+      trainingVal = `<span style="${unk}">? Unknown</span>`;
+    }
+
+    const pinList = ((modelObj.regionPinsByProvider || {})[off.providerId] || [])
+      .map(p => p === 'none' ? 'Unpinned' : (REGION_PIN_LABELS[p] || p));
+    const regionTooltipExtra = pinList.length > 1
+      ? `This provider lists several routings for the model: ${pinList.join(', ')}.`
       : '';
+    const usHostingRe = /aws|azure|gcp|google cloud|microsoft|bedrock|cloudflare/i;
+    const hostingDetail = (sov.details?.hosting?.detail) || (sovMeta.hosting && sovMeta.hosting.detail) || '';
+    const isUSHosting = sov.hosting === 'eu' && (usHostingRe.test(hostingDetail) || /^(opper|requesty)$/.test(off.providerId) || (hostingDetail.includes('Stockholm') && hostingDetail.includes('AWS')));
+    const isHostingSovereign = sovMeta.jurisdiction && sovMeta.jurisdiction.inEu && sov.hosting === 'eu' && !isUSHosting;
+    let hostingVal;
+    if (sov.hosting === 'eu') {
+      if (isHostingSovereign) {
+        hostingVal = `<span style="${pos}" title="${sovTitle('hosting')} — EU-Sovereign (non-US provider)">✓ EU-Sovereign</span>`;
+      } else if (isUSHosting) {
+        hostingVal = `<span style="${pos}" title="${sovTitle('hosting')} — US-owned provider: CLOUD Act may apply despite EU location">✓ EU (US)</span>`;
+      } else {
+        hostingVal = `<span style="${pos}" title="${sovTitle('hosting')}">✓ EU</span>`;
+      }
+    } else if (sov.hosting === 'us') {
+      hostingVal = `<span title="${sovTitle('hosting')}">US</span>`;
+    } else if (sov.hosting === 'global') {
+      hostingVal = `<span title="${sovTitle('hosting')}">Global</span>`;
+    } else {
+      hostingVal = `<span style="${unk}" title="${sovTitle('hosting')}">? Unknown</span>`;
+    }
+    const usInferenceRe = /aws|bedrock|azure|gcp|vertex|fireworks|xai|openai|anthropic|google/i;
+    const regionDetail = (sov.details?.region?.detail) || (sovMeta.region && sovMeta.region.detail) || '';
+    const creatorIsUS = /^(openai|anthropic|google|amazon|microsoft|xai|perplexity|meta|nousresearch|cohere|writer)$/i.test(modelObj.creator || '');
+    const isUSInferenceEU = sov.region === 'eu' && (
+      usInferenceRe.test(regionDetail) ||
+      creatorIsUS ||
+      (off.providerId === 'requesty' && /bedrock|azure|vertex/i.test(off.normOffer.rawModelId || ''))
+    );
+    // EU-Sovereign = jurisdiction EU + hosting EU non-US + inference EU non-US + (European model OR open-weights hosted by non-US) per strict definition
+    const isEuropeanModel = /^(mistral ai)$/i.test(modelObj.creator || '');
+    const isOpenWeightsModel = /llama|qwen|deepseek|gemma|mistral|mixtral|ministral|codestral|voxtral|devstral|pixtral|glm|kimi|granite|command|hermes|minicpm|phi|falcon|bloom|openbmb|nous/i.test((modelObj.id || '').toLowerCase()) || /^(meta|mistral ai|alibaba cloud|deepseek|moonshot ai|zhipu ai|cohere|ibm|nousresearch|swiss ai|tencent|xiaomi|nvidia)$/i.test(modelObj.creator || '');
+    const isSovereign = sovMeta.jurisdiction && sovMeta.jurisdiction.inEu && sov.hosting === 'eu' && !isUSHosting && sov.region === 'eu' && !isUSInferenceEU && (isEuropeanModel || isOpenWeightsModel);
+    let regionVal;
+    if (sov.region === 'eu') {
+      if (isUSInferenceEU) {
+        regionVal = `<span style="${pos}" title="${sovTitle('region', regionTooltipExtra)} — EU region of US provider, CLOUD Act applicable">✓ EU (US)</span>`;
+      } else if (isSovereign) {
+        regionVal = `<span style="${pos}" title="${sovTitle('region', regionTooltipExtra)} — EU-Sovereign (non-US provider)">✓ EU-Sovereign</span>`;
+      } else {
+        regionVal = `<span style="${pos}" title="${sovTitle('region', regionTooltipExtra)}">✓ EU</span>`;
+      }
+    } else if (sov.region === 'us') {
+      regionVal = `<span title="${sovTitle('region', regionTooltipExtra)}">US</span>`;
+    } else if (sov.region === 'global') {
+      regionVal = `<span title="${sovTitle('region', regionTooltipExtra)}">Global</span>`;
+    } else {
+      regionVal = `<span style="${unk}" title="${sovTitle('region', regionTooltipExtra)}">? Unknown</span>`;
+    }
+
+    const infra = off.normOffer.infrastructure || {};
+    const hostNames = (Array.isArray(infra.hosts) ? infra.hosts : [])
+      .map(h => typeof h === 'string' ? h : (h && (h.name || h.id || h.provider)) || '')
+      .filter(Boolean);
+    const routingExtra = hostNames.length ? `EU hosting partners: ${hostNames.join(', ')}.` : '';
+    let routingVal;
+    if (sov.routing === 'direct') {
+      routingVal = `<span style="${pos}" title="${sovTitle('routing', routingExtra)}">Direct</span>`;
+    } else if (sov.routing === 'aggregator') {
+      routingVal = `<span title="${sovTitle('routing', routingExtra)}">Aggregator</span>`;
+    } else {
+      routingVal = `<span style="${unk}" title="${sovTitle('routing', routingExtra)}">? Unknown</span>`;
+    }
+
+    const sovereigntyHtml = `
+        <div class="modal-card-sovereignty">
+          <span class="lbl" style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 4px;">Data Sovereignty</span>
+          <div class="sov-row"><span class="sov-lbl">Jurisdiction</span><span class="sov-val">${jurisdictionVal}</span></div>
+          <div class="sov-row"><span class="sov-lbl">Retention</span><span class="sov-val" title="${sovTitle('retention')}">${retentionVal}</span></div>
+          <div class="sov-row"><span class="sov-lbl">Training</span><span class="sov-val" title="${sovTitle('training')}">${trainingVal}</span></div>
+          <div class="sov-row"><span class="sov-lbl">Hosting</span><span class="sov-val" title="${sovTitle('hosting')}">${hostingVal}</span></div>
+          <div class="sov-row"><span class="sov-lbl">Inference</span><span class="sov-val">${regionVal}</span></div>
+          <div class="sov-row"><span class="sov-lbl">Routing</span><span class="sov-val">${routingVal}</span></div>
+        </div>
+      `;
 
     const offerContext = off.normOffer.contextSize ? `${off.normOffer.contextSize.toLocaleString()} context` : 'Standard context';
     const offerMaxOut = off.normOffer.maxOutputTokens ? `${off.normOffer.maxOutputTokens.toLocaleString()} max out` : '';
@@ -2010,30 +1605,35 @@ function openModalWithSelection(modelObj) {
     // Other raw IDs this provider lists for the same canonical model (region pins collapsed)
     const providerAltIds = [...new Set(
       ((modelObj.alternateIdsByProvider && modelObj.alternateIdsByProvider[off.providerId]) || [])
-        .map(displayModelId)
-        .filter(Boolean)
-        .filter(id => id !== displayModelId(off.normOffer.rawModelId))
-    )];
+    )]
+      .map(raw => {
+        const label = displayModelId(raw);
+        const pinMatch = /@([a-z][a-z0-9-]*)$/i.exec(String(raw || ''));
+        const bucket = pinMatch ? regionBucketFromCode(pinMatch[1]) : null;
+        return { raw, label, pinTitle: bucket ? `Region routing: ${REGION_PIN_LABELS[bucket] || bucket}` : '' };
+      })
+      .filter(item => item.label && item.label !== displayModelId(off.normOffer.rawModelId));
     const sameModelIdsHtml = providerAltIds.length > 0
       ? `<div style="margin-top: 6px;">
           <span style="font-size:0.6rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 3px;">Same Model Listed As (${providerAltIds.length})</span>
           <div style="display:flex; flex-wrap:wrap; gap:4px;">
-            ${providerAltIds.map(id => `<code style="font-family:var(--font-mono); font-size:0.66rem; color:var(--text-muted); background:rgba(255,255,255,0.03); border:1px solid var(--border-color); padding:1px 5px; border-radius:4px;">${escapeHtml(id)}</code>`).join('')}
+            ${providerAltIds.map(item => `<code title="${escapeHtml(item.pinTitle)}" style="font-family:var(--font-mono); font-size:0.66rem; color:var(--text-muted); background:rgba(255,255,255,0.03); border:1px solid var(--border-color); padding:1px 5px; border-radius:4px;">${escapeHtml(item.label)}</code>`).join('')}
           </div>
         </div>`
       : '';
 
     return `
-      <div class="modal-model-card" style="--card-i:${idx}; ${cardStyle}">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div class="modal-model-card${isBenchmark ? ' benchmark-card' : ''}" style="--card-i:${idx}; ${cardStyle}">
+        <div style="display:flex; justify-content:${isBenchmark ? 'space-between' : 'flex-start'}; align-items:center; gap:6px; flex-wrap:wrap;">
           <span class="badge ${badgeClass}">${off.providerName}</span>
+          ${isBenchmark ? '<span class="badge badge-benchmark" title="Non-European aggregator, listed purely for price comparison">Non-EU Reference</span>' : ''}
         </div>
 
         <div class="modal-card-slug">
-          <span style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 4px;">API Model Slug</span>
-          <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; justify-content:space-between; gap: 8px;">
-            <code style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-main); word-break:break-all;">${displayModelId(off.normOffer.rawModelId)}</code>
-            <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${displayModelId(off.normOffer.rawModelId)}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; transition: color 0.15s;" title="Copy to clipboard">
+          <span style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 4px;">API Model Slug${sov.region === 'eu' && off.normOffer.rawModelId.includes('@') ? ' <span style=&quot;color:var(--savings-color); text-transform:none; font-weight:400;&quot;>(EU pin required for ✓ EU below)</span>' : ''}</span>
+          <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; justify-content:space-between; gap: 8px; min-width:0;">
+            <code style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-main); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0;">${escapeHtml(off.normOffer.rawModelId)}</code>
+            <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${off.normOffer.rawModelId.replace(/'/g, "\\'")}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; transition: color 0.15s; flex-shrink:0;" title="Copy to clipboard">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             </button>
           </div>
@@ -2067,13 +1667,15 @@ function openModalWithSelection(modelObj) {
           </div>
         </div>
 
+        ${sovereigntyHtml}
+
         ${off.normOffer.alternateSlugs && off.normOffer.alternateSlugs.length > 0 ? `
           <div style="margin-top: auto; padding-top: 0.25rem;">
             <span style="font-size:0.6rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 3px;">Also Available As (Rolling Alias)</span>
             ${off.normOffer.alternateSlugs.map(alt => `
-              <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.015); border: 1px dashed var(--border-color); padding: 3px 6px; border-radius: 5px; justify-content:space-between; gap: 6px; margin-bottom: 4px;">
-                  <code style="font-family:var(--font-mono); font-size:0.7rem; color:var(--text-muted); word-break:break-all;">${displayModelId(alt.rawModelId)}</code>
-                <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${displayModelId(alt.rawModelId)}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center;" title="Copy alias slug">
+              <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.015); border: 1px dashed var(--border-color); padding: 3px 6px; border-radius: 5px; justify-content:space-between; gap: 6px; margin-bottom: 4px; min-width:0;">
+                  <code style="font-family:var(--font-mono); font-size:0.7rem; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0;">${displayModelId(alt.rawModelId)}</code>
+                <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${displayModelId(alt.rawModelId)}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; flex-shrink:0;" title="Copy alias slug">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
               </div>
@@ -2081,18 +1683,25 @@ function openModalWithSelection(modelObj) {
           </div>
         ` : ''}
         ${sameModelIdsHtml}
-        ${infraHtml}
       </div>
     `;
-  }).join('');
+  };
+
+  // Non-EU reference card renders inside the same grid, always last, faded.
+  const cardsHtml = offersList.map((off, idx) => renderProviderCard(off, idx, false)).join('');
+  const benchmarkCardHtml = benchmarkOfferEntry
+    ? renderProviderCard(benchmarkOfferEntry, offersList.length, true)
+    : '';
 
   modalContent.innerHTML = `
     ${overviewHtml}
     <div class="modal-cards-grid">
       ${cardsHtml}
+      ${benchmarkCardHtml}
     </div>
     <p class="comparison-note">
       <strong>Price comparison only.</strong> Listed prices do not indicate overall suitability. Before choosing a provider, verify supported features such as caching and tools, rate limits and quotas, context and output limits, latency, availability and reliability, data retention and training policies, data residency, security and compliance requirements, API compatibility, support, and SLA terms.
+      ${benchmarkCardHtml ? ' The greyed-out <strong>OpenRouter</strong> card is a non-EU aggregator shown purely for price comparison; it is excluded from all rankings, filters and cost estimates on this site.' : ''}
     </p>
   `;
 
@@ -2202,20 +1811,30 @@ function setupUIEventListeners() {
       document.querySelectorAll('.currency-option').forEach(o => o.classList.remove('active'));
       option.classList.add('active');
       
-      selectedCurrency = option.dataset.currency;
-      console.log('Switched currency to:', selectedCurrency);
-      
-      configureCostFilters();
-      applyFiltersAndRender();
+      const newCur = option.dataset.currency;
+      if (newCur === selectedCurrency) return;
+      _lastCurrency = selectedCurrency;
+      selectedCurrency = newCur;
+      _currencySwitchPending = true;
+      // Clear friendly cache not needed, but ensure_int formatters use new currency symbol
+      requestAnimationFrame(() => {
+        configureCostFilters();
+        _currencySwitchPending = false;
+        // Direct call uses precomputed map + chunked render, keeps UI responsive
+        applyFiltersAndRender();
+      });
     });
   }
 
   // 3. Inline Header Filters
   const filterIdInput = document.getElementById('filter-id');
   if (filterIdInput) {
-    filterIdInput.addEventListener('input', (e) => {
-      searchQuery = e.target.value;
+    const debouncedSearch = debounce((val) => {
+      searchQuery = val;
       applyFiltersAndRender();
+    }, 250);
+    filterIdInput.addEventListener('input', (e) => {
+      debouncedSearch(e.target.value);
     });
   }
 
@@ -2302,13 +1921,15 @@ function setupUIEventListeners() {
       updateCostFilterDisplay(key);
     };
 
+    const debouncedApply = debounce(applyFiltersAndRender, 150);
     minInput.addEventListener('input', e => updateRange('min', e));
     maxInput.addEventListener('input', e => updateRange('max', e));
-    minInput.addEventListener('change', () => applyFiltersAndRender());
-    maxInput.addEventListener('change', () => applyFiltersAndRender());
+    minInput.addEventListener('change', debouncedApply);
+    maxInput.addEventListener('change', debouncedApply);
   });
 
-  // 2b. Workload estimator inputs
+  // 2b. Workload estimator inputs (debounced)
+  const debouncedWorkloadApply = debounce(applyFiltersAndRender, 250);
   const minContextInputs = Array.from(document.querySelectorAll('#filter-context-size'));
   if (minContextInputs.length > 0) {
     const handler = (e) => {
@@ -2319,7 +1940,7 @@ function setupUIEventListeners() {
           input.value = minContextSize || '';
         }
       });
-      applyFiltersAndRender();
+      debouncedWorkloadApply();
     };
     minContextInputs.forEach(input => {
       input.addEventListener('input', handler);
@@ -2332,7 +1953,7 @@ function setupUIEventListeners() {
       const v = parseInt(e.target.value, 10);
       if (!isNaN(v) && v > 0) {
         workloadInputTokens = v;
-        applyFiltersAndRender();
+        debouncedWorkloadApply();
       }
     };
     inputTokensInput.addEventListener('input', handler);
@@ -2344,7 +1965,7 @@ function setupUIEventListeners() {
       const v = parseInt(e.target.value, 10);
       if (!isNaN(v) && v > 0) {
         workloadOutputTokens = v;
-        applyFiltersAndRender();
+        debouncedWorkloadApply();
       }
     };
     outputTokensInput.addEventListener('input', handler);
