@@ -65,8 +65,9 @@ function debounce(fn, ms) {
     t = setTimeout(() => fn(...args), ms);
   };
 }
-// Coalesce multiple synchronous calls into one rAF
+let _deferredRender = false;
 function scheduleRender() {
+  if (document.hidden) { _deferredRender = true; return; }
   if (scheduleRender._raf) return;
   scheduleRender._raf = requestAnimationFrame(() => {
     scheduleRender._raf = null;
@@ -905,9 +906,13 @@ function getContextRange(modelObj) {
 
 let _renderId = 0;
 let _renderRaf = null;
+let _renderTimeout = null;
 function applyFiltersAndRender() {
+  if (document.hidden) { _deferredRender = true; return; }
+  _deferredRender = false;
   const myId = ++_renderId;
   if (_renderRaf) cancelAnimationFrame(_renderRaf);
+  if (_renderTimeout) { clearTimeout(_renderTimeout); _renderTimeout = null; }
   // Precompute per-model derived values once (friendly name, costs, context) to avoid N× repeated getters
   const qLower = searchQuery ? searchQuery.toLowerCase() : '';
   const inputRange = costFilterRanges.input;
@@ -1136,33 +1141,69 @@ function renderTable(models) {
 function renderTableChunked(models, computed, renderId) {
   const tbody = document.getElementById('models-table-body');
   if (!tbody) return;
+  if (window._tableObserver) { try { window._tableObserver.disconnect(); } catch {} window._tableObserver = null; }
+  if (_renderRaf) { cancelAnimationFrame(_renderRaf); _renderRaf = null; }
+  if (_renderTimeout) { clearTimeout(_renderTimeout); _renderTimeout = null; }
   if (models.length === 0) {
     const isInitialLoad = (typeof unifiedModels === 'undefined' || unifiedModels.length === 0);
     if (isInitialLoad) return;
     tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><p>No models match your filter criteria.</p></div></td></tr>`;
     return;
   }
-  const CHUNK = 60;
+  const PAGE = 80;
   let idx = 0;
-  // Render first chunk synchronously for perceived speed
-  const firstEnd = Math.min(CHUNK, models.length);
+  const firstEnd = Math.min(PAGE, models.length);
   let html = '';
   for (let i = 0; i < firstEnd; i++) html += buildRowHtml(models[i], computed.get(models[i]));
+  if (firstEnd < models.length) {
+    html += `<tr id="table-sentinel"><td colspan="8" style="text-align:center; padding:12px; color:var(--text-muted); font-size:0.8rem;">Showing ${firstEnd} of ${models.length} — scroll to load more</td></tr>`;
+  }
   tbody.innerHTML = html;
   idx = firstEnd;
-  if (idx >= models.length) return;
-  function appendChunk() {
-    if (renderId !== _renderId) return; // cancelled by newer render
-    const end = Math.min(idx + CHUNK, models.length);
-    let chunkHtml = '';
-    for (let i = idx; i < end; i++) chunkHtml += buildRowHtml(models[i], computed.get(models[i]));
-    tbody.insertAdjacentHTML('beforeend', chunkHtml);
-    idx = end;
-    if (idx < models.length) {
-      _renderRaf = requestAnimationFrame(appendChunk);
-    }
+  if (idx >= models.length) {
+    window._loadAllTableRows = null;
+    return;
   }
-  _renderRaf = requestAnimationFrame(appendChunk);
+  // For END / disclaimer: load all remaining rows so anchor jump reaches footer
+  window._loadAllTableRows = () => {
+    if (renderId !== _renderId) return;
+    if (window._tableObserver) { try { window._tableObserver.disconnect(); } catch {} window._tableObserver = null; }
+    const s = document.getElementById('table-sentinel');
+    if (s) s.remove();
+    if (idx >= models.length) return;
+    let allHtml = '';
+    for (let i = idx; i < models.length; i++) allHtml += buildRowHtml(models[i], computed.get(models[i]));
+    tbody.insertAdjacentHTML('beforeend', allHtml);
+    idx = models.length;
+  };
+  const observer = new IntersectionObserver(entries => {
+    if (!entries[0] || !entries[0].isIntersecting) return;
+    if (renderId !== _renderId) { observer.disconnect(); return; }
+    if (document.hidden) return;
+    observer.disconnect();
+    const start = performance.now();
+    const nextEnd = Math.min(idx + 60, models.length);
+    let chunkHtml = '';
+    for (let i = idx; i < nextEnd; i++) chunkHtml += buildRowHtml(models[i], computed.get(models[i]));
+    idx = nextEnd;
+    const sentinel = document.getElementById('table-sentinel');
+    if (sentinel) sentinel.remove();
+    tbody.insertAdjacentHTML('beforeend', chunkHtml);
+    if (idx < models.length) {
+      tbody.insertAdjacentHTML('beforeend', `<tr id="table-sentinel"><td colspan="8" style="text-align:center; padding:12px; color:var(--text-muted); font-size:0.8rem;">Showing ${idx} of ${models.length} — scroll to load more</td></tr>`);
+      const newSentinel = document.getElementById('table-sentinel');
+      if (newSentinel) {
+        // yield to layout before re-observing
+        const elapsed = performance.now() - start;
+        if (elapsed > 8) setTimeout(() => observer.observe(newSentinel), 0);
+        else observer.observe(newSentinel);
+      }
+      window._tableObserver = observer;
+    }
+  }, { root: null, rootMargin: '800px', threshold: 0 });
+  window._tableObserver = observer;
+  const sentinel = document.getElementById('table-sentinel');
+  if (sentinel) observer.observe(sentinel);
 }
 
 // --- MODAL POPUP SPLIT DETAILS ---
@@ -2060,6 +2101,34 @@ function setupUIEventListeners() {
 
       applyFiltersAndRender();
     });
+  });
+
+  // Pause heavy work when hidden — prevents queue burst that freezes whole system on tab return (10-15s report)
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (_renderRaf) { cancelAnimationFrame(_renderRaf); _renderRaf = null; }
+      if (_renderTimeout) { clearTimeout(_renderTimeout); _renderTimeout = null; }
+      if (scheduleRender._raf) { cancelAnimationFrame(scheduleRender._raf); scheduleRender._raf = null; }
+      if (window._tableObserver) { try { window._tableObserver.disconnect(); } catch {} }
+    } else if (_deferredRender) {
+      _deferredRender = false;
+      requestAnimationFrame(() => applyFiltersAndRender());
+    } else if (window._tableObserver) {
+      const sentinel = document.getElementById('table-sentinel');
+      if (sentinel) { try { window._tableObserver.observe(sentinel); } catch {} }
+    }
+  });
+
+  // Ensure END / disclaimer anchor work with paginated table (only 80 rows initially)
+  document.querySelectorAll('a[href="#data-notice"]').forEach(a => {
+    a.addEventListener('click', () => {
+      if (document.getElementById('table-sentinel') && window._loadAllTableRows) window._loadAllTableRows();
+    });
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'End' && document.getElementById('table-sentinel') && window._loadAllTableRows) {
+      window._loadAllTableRows();
+    }
   });
 }
 
