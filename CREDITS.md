@@ -27,6 +27,6 @@ The EuroInference name, logo, favicon, and visual styling in `assets/`, `favicon
 
 The following commercial providers are *queried* for public catalog/pricing only — we aggregate and normalize their public listings for comparison. They are not dependencies we reuse, and their appearance does not imply sponsorship, endorsement, or affiliation. Each retains its own terms, trademarks, privacy policies, and data-retention practices. All are queried for **catalog & pricing** (Mistral via pricing pages):
 
-[Mammouth AI](https://mammouth.ai/) · [Cortecs](https://cortecs.ai/) · [Eden AI](https://www.edenai.co/) · [Opper AI](https://opper.ai/) · [EURouter](https://eurouter.ai/) · [Requesty AI](https://www.requesty.ai/) · [Mistral AI](https://mistral.ai/)
+[Cortecs](https://cortecs.ai/) · [Eden AI](https://www.edenai.co/) · [EURouter](https://eurouter.ai/) · [GreenPT](https://greenpt.com/) · [Mammouth AI](https://mammouth.ai/) · [Mistral AI](https://mistral.ai/) · [Opper AI](https://opper.ai/) · [Requesty AI](https://www.requesty.ai/)
 
 EuroInference normalizes these source records for comparison. The normalized output is not an official copy of any provider catalog and should not be treated as a provider commitment.
