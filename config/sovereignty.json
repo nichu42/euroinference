@@ -1,5 +1,5 @@
 {
-  "verified_date": "2026-08-27",
+  "verified_date": "2026-08-28",
   "schema_notes": "Per-provider public-policy facts. Omitted blocks are treated as unknown by the app. Sources must be public pages; details quote or paraphrase them. Per-offer API signals always take precedence over these provider-level defaults. Hosting = where the gateway/control plane runs; processing_region = where model inference runs (they differ for aggregators).",
   "providers": {
     "mammouth": {
@@ -302,6 +302,55 @@
         "detail": "Routes to EU-hosted offerings of multiple model providers.",
         "sources": [
           "https://www.eurouter.ai/providers"
+        ]
+      }
+    },
+    "greenpt": {
+      "display_name": "GreenPT",
+      "jurisdiction": {
+        "country": "Netherlands",
+        "code": "NL",
+        "in_eu": true,
+        "detail": "GreenPT BV, Plompetorengracht 4, 3512 CC Utrecht, Netherlands, Chamber of Commerce 97084360, DPO mail@greenpt.ai (GDPR).",
+        "sources": [
+          "https://docs.greenpt.ai/privacy/privacy-policy"
+        ]
+      },
+      "retention": {
+        "zero_day_by_default": true,
+        "detail": "API payloads & audio input: no persistent storage — processed in-memory only and discarded immediately after transcription (API scope). Chat history retention (12 months, outside API scope) does not apply to API calls.",
+        "sources": [
+          "https://docs.greenpt.ai/privacy/privacy-policy"
+        ]
+      },
+      "training": {
+        "uses_customer_data": false,
+        "detail": "We never use your conversations, documents, or API traffic to train AI models, ours or anyone else's. Every model is self-hosted on GreenPT infrastructure, so your data never leaves our environment.",
+        "sources": [
+          "https://greenpt.com/privacy",
+          "https://docs.greenpt.ai/privacy/privacy-policy"
+        ]
+      },
+      "hosting": {
+        "region": "eu",
+        "detail": "All data hosted exclusively in EU data centres (France) on 100% renewable energy; primary sub-processor Scaleway SAS France (ISO 27001, 100% renewable).",
+        "sources": [
+          "https://docs.greenpt.ai/privacy/privacy-policy"
+        ]
+      },
+      "processing_region": {
+        "region": "eu",
+        "detail": "Personal data processed exclusively within EU data centres located in France; no transfer outside EEA without explicit authorization. Sub-processors: Scaleway SAS France primary; Mollie NL for payments; Brave Search USA only for search.greenpt.ai.",
+        "sources": [
+          "https://docs.greenpt.ai/privacy/privacy-policy"
+        ]
+      },
+      "routing": {
+        "model": "aggregator",
+        "detail": "API proxy aggregates EU-hosted open-weights models (Scaleway France); on-premise deployment option for full sovereignty.",
+        "sources": [
+          "https://docs.greenpt.ai/privacy/privacy-policy",
+          "https://docs.greenpt.ai/model-cards"
         ]
       }
     },

@@ -476,7 +476,7 @@ function renderUpdateWarning() {
   if (!el || typeof UPDATE_STATUS === 'undefined') return;
   const names = {
     mammouth: 'Mammouth AI', cortecs: 'Cortecs', mistral: 'Mistral AI',
-    edenai: 'Eden AI', opper: 'Opper AI', eurouter: 'EURouter', requesty: 'Requesty AI',
+    edenai: 'Eden AI', opper: 'Opper AI', eurouter: 'EURouter', greenpt: 'GreenPT', requesty: 'Requesty AI',
     openrouter: 'OpenRouter (reference)'
   };
   const failed = Object.entries(names)
@@ -530,6 +530,12 @@ function getOfferInputCost(providerId, offer, currency = selectedCurrency) {
     } else {
       return currency === 'USD' ? priceVal : priceVal / exchangeRate;
     }
+  }
+
+  if (providerId === 'greenpt') {
+    if (!offer.pricing || offer.pricing.promptToken === undefined) return null;
+    const priceEur = offer.pricing.promptToken;
+    return currency === 'EUR' ? priceEur : priceEur * exchangeRate;
   }
 
   if (providerId === 'requesty') {
@@ -589,6 +595,12 @@ function getOfferOutputCost(providerId, offer, currency = selectedCurrency) {
     } else {
       return currency === 'USD' ? priceVal : priceVal / exchangeRate;
     }
+  }
+
+  if (providerId === 'greenpt') {
+    if (!offer.pricing || offer.pricing.completionToken === undefined) return null;
+    const priceEur = offer.pricing.completionToken;
+    return currency === 'EUR' ? priceEur : priceEur * exchangeRate;
   }
 
   if (providerId === 'requesty') {
@@ -660,6 +672,8 @@ function getOfferCacheRates(providerId, offer, currency = selectedCurrency) {
     write = Number.isFinite(rawWrite) && rawWrite > 0 ? rawWrite * 1000000 : null;
     read = convertPerMillionRate(read, origCur, currency);
     write = convertPerMillionRate(write, origCur, currency);
+  } else if (providerId === 'greenpt') {
+    read = convertPerMillionRate(positiveRate(offer.pricing?.cachedPromptToken), 'EUR', currency);
   } else if (providerId === 'requesty') {
     read = convertPerMillionRate(usdPerTokenToPerMillion(offer.cached_price), 'USD', currency);
     write = convertPerMillionRate(usdPerTokenToPerMillion(offer.caching_price), 'USD', currency);

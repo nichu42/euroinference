@@ -78,6 +78,7 @@ let PROVIDER_DISPLAY_NAMES = {
   edenai: 'Eden AI',
   opper: 'Opper AI',
   eurouter: 'EURouter',
+  greenpt: 'GreenPT',
   requesty: 'Requesty AI',
   openrouter: 'OpenRouter'
 };
@@ -358,6 +359,8 @@ function getNativeInputCost(providerId, offer) {
     case 'eurouter':
       return offer.pricing && offer.pricing.prompt !== undefined
         ? parseFloat(offer.pricing.prompt) * 1000000 : null;
+    case 'greenpt':
+      return offer.pricing && offer.pricing.promptToken !== undefined ? offer.pricing.promptToken : null;
     case 'requesty':
       return offer.input_price !== undefined ? offer.input_price * 1000000 : null;
     case 'openrouter':
@@ -386,6 +389,8 @@ function getNativeOutputCost(providerId, offer) {
     case 'eurouter':
       return offer.pricing && offer.pricing.completion !== undefined
         ? parseFloat(offer.pricing.completion) * 1000000 : null;
+    case 'greenpt':
+      return offer.pricing && offer.pricing.completionToken !== undefined ? offer.pricing.completionToken : null;
     case 'requesty':
       return offer.output_price !== undefined ? offer.output_price * 1000000 : null;
     case 'openrouter':
@@ -431,6 +436,9 @@ function getNativeCacheRates(providerId, offer) {
       read = positiveRate(offer.cached_price);
       write = positiveRate(offer.caching_price);
       break;
+    case 'greenpt':
+      read = positiveRate(offer.pricing?.cachedPromptToken);
+      break;
     case 'openrouter':
       read = positiveRate(offer.pricing?.input_cache_read);
       break;
@@ -470,7 +478,7 @@ function normalizeOffer(providerId, rawModel, sovereigntyConfig) {
   const idLower = (rawModel.id || '').toLowerCase();
 
   // 1. Creator extraction
-  const rawOwner = rawModel.owned_by || rawModel.author || (rawModel.author_info && rawModel.author_info.display_name) || rawModel.provider_display_name;
+  const rawOwner = rawModel.owned_by || rawModel.ownedBy || rawModel.author || (rawModel.author_info && rawModel.author_info.display_name) || rawModel.provider_display_name;
   let creator = rawModel.creator || getModelCreator(rawModel.id, rawOwner);
   if (effectiveProviderId === 'mistral') {
     creator = /@regional$/i.test(rawModel.id || '') ? 'Mistral AI Regional' : 'Mistral AI';
@@ -497,6 +505,9 @@ function normalizeOffer(providerId, rawModel, sovereigntyConfig) {
     maxOutputTokens = typeof rawModel.max_output_tokens === 'number' ? rawModel.max_output_tokens : null;
   } else if (providerId === 'eurouter') {
     contextSize = typeof rawModel.context_length === 'number' ? rawModel.context_length : null;
+  } else if (providerId === 'greenpt') {
+    contextSize = typeof rawModel.contextWindowTokens === 'number' ? rawModel.contextWindowTokens : (typeof rawModel.context_length === 'number' ? rawModel.context_length : null);
+    maxOutputTokens = typeof rawModel.maxOutputTokens === 'number' ? rawModel.maxOutputTokens : null;
   } else if (providerId === 'requesty') {
     contextSize = typeof rawModel.context_window === 'number' ? rawModel.context_window : null;
     maxOutputTokens = typeof rawModel.max_output_tokens === 'number' ? rawModel.max_output_tokens : null;
@@ -611,9 +622,12 @@ function normalizeOffer(providerId, rawModel, sovereigntyConfig) {
   const description = rawModel.description && typeof rawModel.description === 'string' && rawModel.description.trim() ? rawModel.description.trim() : null;
 
   // 5. European Infrastructure & Privacy
-  const hosts = (Array.isArray(rawModel.providers) ? rawModel.providers : [])
+  let hosts = (Array.isArray(rawModel.providers) ? rawModel.providers : [])
     .map(h => typeof h === 'string' ? h : (h?.name || h?.id || h?.provider || ''))
     .filter(Boolean);
+  if (providerId === 'greenpt' && typeof rawModel.provider === 'string' && rawModel.provider.trim()) {
+    hosts = [rawModel.provider.trim()];
+  }
   const regions = (Array.isArray(rawModel.regions) ? rawModel.regions : (rawModel.region ? [rawModel.region] : []))
     .map(r => typeof r === 'string' ? r : (r?.name || r?.code || r?.region || ''))
     .filter(Boolean);
@@ -976,6 +990,54 @@ function buildUnifiedModels(options) {
   for (let i = groups.length - 1; i >= 0; i--) {
     if (Object.keys(groups[i].normalizedOffers).length === 0) {
       groups.splice(i, 1);
+    }
+  }
+
+  // GreenPT compression variants: glm-5.2-caveman/honey/ponytail families are same price, only output style compressed.
+  // Collapse the 9 duplicate €/1M rows into base glm-5.2 as variant list (alternateSlugs) to keep the table priced, not styled.
+  const compressionRe = /^glm-5\.2-(caveman|honey|ponytail)(?:-lite|-ultra)?$/;
+  const compressionGroups = groups.filter(g => compressionRe.test(g.canonicalId));
+  const baseGlm = groups.find(g => g.canonicalId === 'glm-5.2');
+  if (baseGlm && compressionGroups.length > 0) {
+    for (const compGroup of compressionGroups) {
+      for (const providerId of Object.keys(compGroup.normalizedOffers)) {
+        const compNorm = compGroup.normalizedOffers[providerId];
+        const compRaw = compGroup.offers[providerId];
+        if (!compNorm || !compRaw) continue;
+        if (!baseGlm.normalizedOffers[providerId]) {
+          baseGlm.offers[providerId] = compRaw;
+          baseGlm.normalizedOffers[providerId] = compNorm;
+          if (compGroup.regionPins && compGroup.regionPins[providerId]) {
+            if (!baseGlm.regionPins) baseGlm.regionPins = {};
+            baseGlm.regionPins[providerId] = compGroup.regionPins[providerId];
+          }
+          const byProvider = canonicalRawIds.get(baseGlm.canonicalId);
+          if (byProvider) {
+            if (!byProvider.has(providerId)) byProvider.set(providerId, new Set());
+            byProvider.get(providerId).add(compNorm.rawModelId);
+          }
+        } else {
+          const baseNorm = baseGlm.normalizedOffers[providerId];
+          baseNorm.alternateSlugs = baseNorm.alternateSlugs || [];
+          const label = compNorm.rawModelId.replace(/^glm-5\.2-/, '');
+          baseNorm.alternateSlugs.push({ rawModelId: compNorm.rawModelId, label });
+          const byProvider = canonicalRawIds.get(baseGlm.canonicalId);
+          if (byProvider) {
+            if (!byProvider.has(providerId)) byProvider.set(providerId, new Set());
+            byProvider.get(providerId).add(compNorm.rawModelId);
+          }
+        }
+        delete compGroup.offers[providerId];
+        delete compGroup.normalizedOffers[providerId];
+        if (compGroup.regionPins) delete compGroup.regionPins[providerId];
+        if (compGroup.allListings) delete compGroup.allListings[providerId];
+      }
+    }
+    // Prune the now-empty compression groups
+    for (let i = groups.length - 1; i >= 0; i--) {
+      if (compressionRe.test(groups[i].canonicalId) && Object.keys(groups[i].normalizedOffers).length === 0) {
+        groups.splice(i, 1);
+      }
     }
   }
 

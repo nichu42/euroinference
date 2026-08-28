@@ -76,7 +76,7 @@ function validateGeneratedModels(models, provider) {
 
 function normalizeGeneratedModel(provider, model) {
   const id = resolveRegistryModelId(provider, model.id);
-  const rawOwner = model.owned_by || model.author || model.provider_display_name;
+  const rawOwner = model.owned_by || model.ownedBy || model.author || model.provider_display_name;
   const ownerKey = String(rawOwner || '').toLowerCase().trim();
   const creator = provider === 'mistral'
     ? (/@regional$/i.test(model.id) ? 'Mistral AI Regional' : 'Mistral AI')
@@ -141,6 +141,7 @@ async function run() {
   let opperData = null;
   let eurouterData = null;
   let requestyData = null;
+  let greenptData = null;
   let mistralData = null;
   let mistralApiModels = null;
   let openrouterData = null;
@@ -242,7 +243,20 @@ async function run() {
     console.error('Failed to fetch Requesty AI models:', err.message);
   }
 
-  // 8. Fetch Mistral's API catalog first, then join it to public pricing.
+  // 8. Fetch GreenPT models (EUR pricing, no auth required via /v1/pricing)
+  try {
+    const res = await fetchWithRetry('https://api.greenpt.ai/v1/pricing', {}, 'GreenPT');
+    const json = await res.json();
+    const raw = requireArray(json.data, 'GreenPT');
+    greenptData = buildGreenPTCatalog(raw);
+    updateStatus.greenpt = Array.isArray(greenptData);
+    console.log(`Fetched ${greenptData.length} GreenPT LLM offers (from ${raw.length} pricing records).`);
+  } catch (err) {
+    updateStatus.greenpt = false;
+    console.error('Failed to fetch GreenPT models:', err.message);
+  }
+
+  // 9. Fetch Mistral's API catalog first, then join it to public pricing.
   try {
     if (!process.env.MISTRAL_API_KEY) throw new Error('MISTRAL_API_KEY is not configured');
     const modelsRes = await fetchWithRetry('https://api.mistral.ai/v1/models', {
@@ -266,7 +280,7 @@ async function run() {
     console.warn('Failed to fetch Mistral AI models:', err.message);
   }
 
-  // 9. Fetch OpenRouter models — non-EU reference for the detail modal only.
+  // 10. Fetch OpenRouter models — non-EU reference for the detail modal only.
   // These records never enter the unified model list or any ranking/estimate.
   try {
     const endpoint = benchmarkMap.providers?.openrouter?.endpoint || 'https://openrouter.ai/api/v1/models';
@@ -280,7 +294,7 @@ async function run() {
     console.error('Failed to fetch OpenRouter models:', err.message);
   }
 
-  // 10. Fetch models.dev provider-agnostic catalog for enrichment (unified name, lab, modalities, reasoning, tool_call, weights, release_date, context, output, description)
+  // 11. Fetch models.dev provider-agnostic catalog for enrichment (unified name, lab, modalities, reasoning, tool_call, weights, release_date, context, output, description)
   // Note: repo reports models.json as legacy — canonical is now https://models.dev/models.json (provider-agnostic) via catalog generation.
   let modelsDevCatalog = null;
   try {
@@ -305,6 +319,7 @@ async function run() {
   if (opperData) opperData = opperData.map(m => pickFields('opper', m));
   if (eurouterData) eurouterData = eurouterData.map(m => pickFields('eurouter', m));
   if (requestyData) requestyData = requestyData.map(m => pickFields('requesty', m));
+  if (greenptData) greenptData = greenptData.map(m => pickFields('greenpt', m));
   if (mistralData) mistralData = mistralData.map(m => pickFields('mistral', m));
   if (openrouterData) openrouterData = openrouterData.map(m => pickFields('openrouter', m));
 
@@ -316,6 +331,7 @@ async function run() {
   opperData = normalizeProviderData('opper', opperData);
   eurouterData = normalizeProviderData('eurouter', eurouterData);
   requestyData = normalizeProviderData('requesty', requestyData);
+  greenptData = normalizeProviderData('greenpt', greenptData);
   openrouterData = normalizeProviderData('openrouter', openrouterData);
 
   // Unify everything at generation time: grouping, alias resolution, EU-region
@@ -330,6 +346,7 @@ async function run() {
       opper: opperData || [],
       eurouter: eurouterData || [],
       requesty: requestyData || [],
+      greenpt: greenptData || [],
       openrouter: openrouterData || []
     },
     sovereignty: sovereigntyMap,
@@ -364,6 +381,7 @@ async function run() {
     edenai: ['pricing', 'capabilities'],
     opper: ['pricing', 'region'],
     eurouter: ['pricing', 'tags'],
+    greenpt: ['pricing', 'provider', 'type', 'contextWindowTokens', 'maxOutputTokens'],
     requesty: ['input_price', 'output_price', 'cached_price', 'caching_price', 'supports_caching',
       'supports_reasoning', 'supports_vision', 'supports_tool_calling', 'supports_output_json_schema',
       'data_retention_days', 'data_used_for_training', 'geolocation', 'context_window', 'max_output_tokens'],
@@ -613,6 +631,37 @@ function buildOpenRouterCatalog(rawModels) {
   });
 }
 
+// Build GreenPT catalog from /v1/pricing (EUR per 1M tokens, public).
+// Only LLM type with positive input+output pricing is kept; embeddings/rerank/STT are non-token products.
+function buildGreenPTCatalog(rawModels) {
+  return rawModels.flatMap(model => {
+    const id = String(model.id || '').trim();
+    if (!id) return [];
+    const type = String(model.type || '').toUpperCase();
+    if (type !== 'LLM') return [];
+    const pricing = model.pricing && typeof model.pricing === 'object' ? model.pricing : {};
+    const prompt = Number(pricing.promptToken);
+    const completion = Number(pricing.completionToken);
+    if (!Number.isFinite(prompt) || !Number.isFinite(completion) || prompt <= 0 || completion <= 0) return [];
+    const cached = Number(pricing.cachedPromptToken);
+    const out = {
+      id,
+      owned_by: typeof model.ownedBy === 'string' && model.ownedBy.trim() ? model.ownedBy.trim() : 'Other',
+      provider: typeof model.provider === 'string' && model.provider.trim() ? model.provider.trim() : undefined,
+      type,
+      contextWindowTokens: typeof model.contextWindowTokens === 'number' && model.contextWindowTokens > 0 ? model.contextWindowTokens : undefined,
+      maxOutputTokens: typeof model.maxOutputTokens === 'number' && model.maxOutputTokens > 0 ? model.maxOutputTokens : undefined,
+      pricing: {
+        promptToken: prompt,
+        completionToken: completion,
+        ...(Number.isFinite(cached) && cached > 0 ? { cachedPromptToken: cached } : {}),
+        currency: 'EUR'
+      }
+    };
+    return [out];
+  });
+}
+
 // Whitelist of fields each provider's model objects must keep.
 // These are the only fields app.js reads. Anything else is dead weight in the shipped bundle.
 // Mirror of the field accesses in app.js (addOffer, getOfferInputCost, getOfferOutputCost, getModelCreator).
@@ -629,6 +678,7 @@ const FIELD_ALLOWLIST = {
   edenai: ['id', 'owned_by', 'model_name', 'context_length', 'description', 'capabilities', 'pricing', 'regions'],
   opper: ['id', 'name', 'provider_display_name', 'context_window', 'max_output_tokens', 'description', 'capabilities', 'pricing', 'region'],
   eurouter: ['id', 'name', 'author_info', 'author', 'context_length', 'description', 'reasoning', 'tags', 'providers', 'pricing'],
+  greenpt: ['id', 'owned_by', 'provider', 'type', 'contextWindowTokens', 'maxOutputTokens', 'pricing', 'canonical_id', 'creator', 'display_name'],
   requesty: [
     'id', 'description', 'owned_by', 'input_price', 'output_price', 'cached_price', 'caching_price',
     'context_window', 'max_output_tokens', 'supports_caching', 'supports_vision', 'supports_reasoning',
@@ -646,6 +696,7 @@ const FIELD_ALLOWLIST = {
     edenai: ['input_cost_per_token', 'output_cost_per_token', 'cache_read_input_token_cost', 'cache_creation_input_token_cost', 'input_cost_per_token_cache_hit'],
     opper: ['input', 'output', 'cached_input', 'cache_creation'],
     eurouter: ['prompt', 'completion', 'input_cache_read', 'input_cache_write', 'currency'],
+    greenpt: ['promptToken', 'completionToken', 'cachedPromptToken', 'currency'],
     requesty: null,
     openrouter: ['prompt', 'completion', 'input_cache_read', 'currency'],
   },
@@ -703,6 +754,7 @@ const CACHE_FIELD_SPECS = {
   edenai: { pricing: ['cache_read_input_token_cost', 'cache_creation_input_token_cost', 'input_cost_per_token_cache_hit'] },
   opper: { pricingArrays: ['cached_input', 'cache_creation'] },
   eurouter: { pricing: ['input_cache_read', 'input_cache_write'] },
+  greenpt: { pricing: ['cachedPromptToken'] },
   requesty: { top: ['cached_price', 'caching_price'] },
   openrouter: { pricing: ['input_cache_read'] }
 };
