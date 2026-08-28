@@ -503,7 +503,7 @@ function getOfferInputCost(providerId, offer, currency = selectedCurrency) {
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
   
-  if (providerId === 'mistral') {
+  if (providerId === 'mistral' || providerId === 'mistral-regional') {
     if (!offer.pricing) return null;
     if (currency === 'EUR') return offer.pricing.input_token_eur ?? null;
     return offer.pricing.input_token ?? null;
@@ -568,7 +568,7 @@ function getOfferOutputCost(providerId, offer, currency = selectedCurrency) {
     return currency === 'USD' ? priceUsd : priceUsd / exchangeRate;
   }
   
-  if (providerId === 'mistral') {
+  if (providerId === 'mistral' || providerId === 'mistral-regional') {
     if (!offer.pricing) return null;
     if (currency === 'EUR') return offer.pricing.output_token_eur ?? null;
     return offer.pricing.output_token ?? null;
@@ -649,7 +649,7 @@ function getOfferCacheRates(providerId, offer, currency = selectedCurrency) {
   if (providerId === 'cortecs') {
     read = convertPerMillionRate(positiveRate(offer.pricing?.cache_read_cost), 'EUR', currency);
     write = convertPerMillionRate(positiveRate(offer.pricing?.cache_write_cost), 'EUR', currency);
-  } else if (providerId === 'mistral') {
+  } else if (providerId === 'mistral' || providerId === 'mistral-regional') {
     read = currency === 'EUR'
       ? positiveRate(offer.pricing?.cached_input_token_eur)
       : positiveRate(offer.pricing?.cached_input_token);

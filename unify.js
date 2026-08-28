@@ -75,6 +75,7 @@ let PROVIDER_DISPLAY_NAMES = {
   mammouth: 'Mammouth AI',
   cortecs: 'Cortecs',
   mistral: 'Mistral AI',
+  'mistral-regional': 'Mistral AI Regional',
   edenai: 'Eden AI',
   opper: 'Opper AI',
   eurouter: 'EURouter',
@@ -349,6 +350,7 @@ function getNativeInputCost(providerId, offer) {
       return offer.model_info && offer.model_info.input_cost_per_token !== undefined
         ? offer.model_info.input_cost_per_token * 1000000 : null;
     case 'mistral':
+    case 'mistral-regional':
       return offer.pricing ? (offer.pricing.input_token_eur ?? offer.pricing.input_token ?? null) : null;
     case 'edenai':
       return offer.pricing && offer.pricing.input_cost_per_token !== undefined
@@ -379,6 +381,7 @@ function getNativeOutputCost(providerId, offer) {
       return offer.model_info && offer.model_info.output_cost_per_token !== undefined
         ? offer.model_info.output_cost_per_token * 1000000 : null;
     case 'mistral':
+    case 'mistral-regional':
       return offer.pricing ? (offer.pricing.output_token_eur ?? offer.pricing.output_token ?? null) : null;
     case 'edenai':
       return offer.pricing && offer.pricing.output_cost_per_token !== undefined
@@ -413,6 +416,7 @@ function getNativeCacheRates(providerId, offer) {
       write = positiveRate(offer.pricing?.cache_write_cost);
       break;
     case 'mistral':
+    case 'mistral-regional':
       read = positiveRate(offer.pricing?.cached_input_token_eur ?? offer.pricing?.cached_input_token);
       break;
     case 'edenai':
