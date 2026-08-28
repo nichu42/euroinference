@@ -11,7 +11,7 @@ This file is intentionally gitignored. It contains local workflow notes for codi
 - Before pushing, compare the generated timestamp in local `data.js` with `origin/main:data.js`; keep the newer version and discard the older one. Resolve this before staging other changes.
 - CI auto-update commits land on `main` frequently (data.js-only). Fetch and rebase onto `origin/main` before pushing; expect the push to trigger a fresh data regeneration.
 - Do not commit `.env` or expose API keys in logs, generated files, or comments.
-- Treat `config/` as the contributor-maintained source of model aliases, slugs, display names, creators, and exclusions — **change a name/slug/label → `config/`**, **change a rule/heuristic → `unify.js`** (`getCleanModelId`, `regionBucketFromCode`, grouping). `config/sovereignty.json` additionally holds source-linked jurisdiction/retention/training/**hosting vs inference**/routing facts (`hosting` = gateway/control plane, `processing_region` = model inference; `EU-Sovereign` = `jurisdiction EU` + `hosting EU` non-US + `inference EU` non-US + European/open-weights on non-US EU infra); omitted blocks mean unknown — never fabricate or silently fill in. `config/normalization.json:creator_names`/`provider_display_names` are source of truth for `unify.js:CREATOR_NAMES`/`PROVIDER_DISPLAY_NAMES` (fallback hardcoded, overridden live from config in Node).
+- Treat `config/` as the contributor-maintained source of model aliases, slugs, display names, creators, and exclusions — **change a name/slug/label → `config/`**, **change a rule/heuristic → `unify.js`** (`getCleanModelId`, `regionBucketFromCode`, grouping). `config/sovereignty.json` additionally holds source-linked jurisdiction/retention/training/**hosting vs inference**/routing facts (`hosting` = gateway/control plane, `processing_region` = model inference; `EU-Sovereign` = `jurisdiction EU` + `hosting EU` non-US + `inference EU` non-US + European/open-weights on non-US EU infra); omitted blocks mean unknown — never fabricate or silently fill in. `config/creators.json`/`config/providers.json` are source of truth for `unify.js:CREATOR_NAMES`/`PROVIDER_DISPLAY_NAMES` (fallback hardcoded, overridden live from config in Node).
 - Generic model facts (lab, modalities, reasoning, tool_call, weights, release, limits, description) are source of truth from `https://models.dev/models.json` (`MIT`) via `scripts/update_data.js` → `UNIFIED_MODELS[].modelsDev` (`218/475` enriched); provider-specific pricing/limits/sovereignty stay per-provider — do not overwrite provider cost fields with `models.dev` values.
 
 ## Common Commands
@@ -26,6 +26,7 @@ node --check unify.js
 node --check scripts/update_data.js
 node --check data.js
 git diff --check
+node -e "JSON.parse(require('fs').readFileSync('config/models.json','utf8'))"
 ```
 
 For local Mistral API inspection, place `MISTRAL_API_KEY` in the gitignored root `.env`. Never print the key or commit `.env`.
@@ -34,9 +35,10 @@ For local Mistral API inspection, place `MISTRAL_API_KEY` in the gitignored root
 
 Contributor-editable dictionaries are in `config/`:
 
-- `models.json` is the model-centric registry of canonical IDs, display names, creators, provider slugs, and pricing labels.
-- `mistral_models.json` contains Mistral-specific aliases and excluded product categories.
-- `normalization.json` contains shared creator, display, strict-alias, and provider-alias rules.
+- `models.json` is the model registry — `models` with per-model `display_name`/`creator`/`aliases`/`providers` (single format, sorted A–Z, `_help` inline docs; `-latest` via `models.dev`).
+- `creators.json` — creator alias → pretty (global, substring match, sorted A–Z).
+- `providers.json` — provider id → pretty badge (sorted A–Z).
+- `mistral_pricing.json` (renamed from `mistral_models.json`) contains only Mistral pricing-page quirks: `aliases`/`api_aliases` + `excluded_prefixes` for OCR/embed/moderation products.
 - `README.md` documents the JSON schema and contribution conventions.
 
 Update these files instead of hardcoding provider-specific aliases in executable code.

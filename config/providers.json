@@ -1,0 +1,11 @@
+{
+  "_help": "Provider id → pretty badge name shown in table/modal. Source of truth for unify.js:PROVIDER_DISPLAY_NAMES (fallback hardcoded). Sorted A–Z. See config/README.md. Keys starting with _ are docs.",
+  "cortecs": "Cortecs",
+  "edenai": "Eden AI",
+  "eurouter": "EURouter",
+  "mammouth": "Mammouth AI",
+  "mistral": "Mistral AI",
+  "openrouter": "OpenRouter",
+  "opper": "Opper AI",
+  "requesty": "Requesty AI"
+}

@@ -10,9 +10,22 @@
   else root.EuroUnify = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : typeof self !== 'undefined' ? self : this, function () {
 
-// Source of truth lives in config/normalization.json (creator_names, provider_display_names).
+// Source of truth lives in config/models.json (models) + config/creators.json + config/providers.json.
+// Single format for models: models.<id> {display_name, creator, aliases, providers}.
+// Creators/providers are global maps in separate files.
 // Hardcoded fallbacks below are used in the browser when fs is unavailable; Node (update_data.js) will
 // override them live from config. Change a name/slug in config, not here. See config/README.md.
+function _stripDocKeys(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  const out = {};
+  let has = false;
+  for (const [k, v] of Object.entries(obj)) {
+    if (k.startsWith('_')) continue;
+    out[k] = v;
+    has = true;
+  }
+  return has ? out : null;
+}
 let CREATOR_NAMES = {
   'openai': 'OpenAI',
   'anthropic': 'Anthropic',
@@ -71,9 +84,12 @@ let PROVIDER_DISPLAY_NAMES = {
 
 try {
   if (typeof require !== 'undefined' && typeof module !== 'undefined' && module.exports) {
-    const _norm = require('./config/normalization.json');
-    if (_norm.creator_names) CREATOR_NAMES = _norm.creator_names;
-    if (_norm.provider_display_names) PROVIDER_DISPLAY_NAMES = _norm.provider_display_names;
+    const _creatorsRaw = require('./config/creators.json');
+    const _providersRaw = require('./config/providers.json');
+    const _creatorMap = _stripDocKeys(_creatorsRaw);
+    if (_creatorMap) CREATOR_NAMES = _creatorMap;
+    const _providerMap = _stripDocKeys(_providersRaw);
+    if (_providerMap) PROVIDER_DISPLAY_NAMES = _providerMap;
   }
 } catch (_) {}
 
@@ -82,7 +98,10 @@ const STANDARD_CAPABILITIES = ['Reasoning', 'Tools', 'Vision', 'Code', 'Audio', 
 function getCleanCreatorName(ownedBy) {
   if (!ownedBy) return 'Other';
   const raw = ownedBy.toLowerCase().trim();
-  for (const [key, value] of Object.entries(CREATOR_NAMES)) {
+  // Most-specific (longest) key first so 'mistral ai regional' wins over 'mistral'
+  // regardless of file order (which is now alphabetical, human-friendly).
+  const entries = Object.entries(CREATOR_NAMES).sort((a, b) => b[0].length - a[0].length);
+  for (const [key, value] of entries) {
     if (raw === key || raw.includes(key)) {
       return value;
     }
@@ -720,6 +739,16 @@ function buildUnifiedModels(options) {
     }
     return null;
   }
+  // Official slug from models.dev when available — single source for canonical id
+  function getOfficialCanonicalId(rawModel) {
+    const base = getGeneratedCanonicalId(rawModel);
+    const dev = findModelsDevEntry(base);
+    if (dev && dev.id) {
+      const devClean = getCleanModelId(String(dev.id));
+      if (devClean) return devClean;
+    }
+    return base;
+  }
   // Provider-level narrative facts for the sovereignty footer tooltips,
   // emitted once as SOVEREIGNTY_META alongside the unified models.
   const sovereigntyMeta = {};
@@ -756,7 +785,7 @@ function buildUnifiedModels(options) {
   }
 
   function findGroup(rawModel) {
-    const cleanBaseId = getGeneratedCanonicalId(rawModel);
+    const cleanBaseId = getOfficialCanonicalId(rawModel);
     const slug = normalizeSlug(rawModel.id);
     const digits = cleanBaseId.replace(/[^0-9]/g, '');
 
@@ -776,7 +805,7 @@ function buildUnifiedModels(options) {
     let group = findGroup(rawModel);
     if (!group) {
       group = {
-        canonicalId: getGeneratedCanonicalId(rawModel),
+        canonicalId: getOfficialCanonicalId(rawModel),
         creator: normalized.creator,
         offers: {},
         normalizedOffers: {}
@@ -859,44 +888,78 @@ function buildUnifiedModels(options) {
       const context = latestNorm.contextSize;
       const creator = latestGroup.creator;
 
-      const idStr = latestGroup.canonicalId.toLowerCase();
-      let famKeyword = '';
-      if (idStr.includes('opus')) famKeyword = 'opus';
-      else if (idStr.includes('sonnet')) famKeyword = 'sonnet';
-      else if (idStr.includes('haiku')) famKeyword = 'haiku';
-      else if (idStr.includes('fable')) famKeyword = 'fable';
-      else if (idStr.includes('flash')) famKeyword = 'flash';
-      else if (idStr.includes('pro')) famKeyword = 'pro';
-      else if (idStr.includes('mini')) famKeyword = 'mini';
-      else if (idStr.includes('grok-4')) famKeyword = 'grok-4';
-      else if (idStr.includes('grok-3')) famKeyword = 'grok-3';
-      else if (idStr.includes('devstral')) famKeyword = 'devstral';
-      else if (idStr.includes('magistral')) famKeyword = 'magistral';
-      else if (idStr.includes('mistral')) famKeyword = 'mistral';
+      // Resolve -latest via models.dev when available (official slug)
+      let bestTarget = null;
+      const baseFamily = latestGroup.canonicalId.replace(/-latest$/i, '');
+      const devForLatest = findModelsDevEntry(latestGroup.canonicalId) || findModelsDevEntry(baseFamily);
+      if (devForLatest && devForLatest.family && devByClean.size > 0) {
+        const family = devForLatest.family;
+        let latestDev = null;
+        let latestTime = -1;
+        const seenIds = new Set();
+        for (const entry of devByClean.values()) {
+          if (!entry || !entry.id || seenIds.has(entry.id)) continue;
+          seenIds.add(entry.id);
+          if (entry.family !== family) continue;
+          if (String(entry.id).endsWith('-latest')) continue;
+          const t = entry.release_date ? new Date(entry.release_date).getTime() : (entry.last_updated ? new Date(entry.last_updated).getTime() : 0);
+          if (t > latestTime) {
+            latestTime = t;
+            latestDev = entry;
+          }
+        }
+        if (latestDev) {
+          const targetCanonical = getCleanModelId(String(latestDev.id));
+          bestTarget = groups.find(g => g.canonicalId === targetCanonical && g.normalizedOffers[providerId]);
+          if (!bestTarget) {
+            // fallback to family canonical (e.g. mistral-large) if versioned group not present
+            bestTarget = groups.find(g => g.canonicalId === getCleanModelId(family) && g.normalizedOffers[providerId]);
+          }
+        }
+      }
+      // Fallback to previous pricing/context heuristic when models.dev has no family or no match
+      if (!bestTarget) {
+        const idStr = latestGroup.canonicalId.toLowerCase();
+        let famKeyword = '';
+        if (idStr.includes('opus')) famKeyword = 'opus';
+        else if (idStr.includes('sonnet')) famKeyword = 'sonnet';
+        else if (idStr.includes('haiku')) famKeyword = 'haiku';
+        else if (idStr.includes('fable')) famKeyword = 'fable';
+        else if (idStr.includes('flash')) famKeyword = 'flash';
+        else if (idStr.includes('pro')) famKeyword = 'pro';
+        else if (idStr.includes('mini')) famKeyword = 'mini';
+        else if (idStr.includes('grok-4')) famKeyword = 'grok-4';
+        else if (idStr.includes('grok-3')) famKeyword = 'grok-3';
+        else if (idStr.includes('devstral')) famKeyword = 'devstral';
+        else if (idStr.includes('magistral')) famKeyword = 'magistral';
+        else if (idStr.includes('mistral')) famKeyword = 'mistral';
 
-      const candidates = groups.filter(g => {
-        if (g === latestGroup) return false;
-        if (g.canonicalId.endsWith('-latest')) return false;
-        if (g.creator !== creator) return false;
-        if (!g.normalizedOffers[providerId]) return false;
-        if (famKeyword && !g.canonicalId.includes(famKeyword)) return false;
+        const candidates = groups.filter(g => {
+          if (g === latestGroup) return false;
+          if (g.canonicalId.endsWith('-latest')) return false;
+          if (g.creator !== creator) return false;
+          if (!g.normalizedOffers[providerId]) return false;
+          if (famKeyword && !g.canonicalId.includes(famKeyword)) return false;
 
-        const targetRaw = g.offers[providerId];
-        const targetNorm = g.normalizedOffers[providerId];
-        const targetIn = getNativeInputCost(providerId, targetRaw);
-        const targetOut = getNativeOutputCost(providerId, targetRaw);
+          const targetRaw = g.offers[providerId];
+          const targetNorm = g.normalizedOffers[providerId];
+          const targetIn = getNativeInputCost(providerId, targetRaw);
+          const targetOut = getNativeOutputCost(providerId, targetRaw);
 
-        const diffIn = Math.abs(targetIn - inCost) / (Math.max(targetIn, inCost) || 1);
-        const diffOut = Math.abs(targetOut - outCost) / (Math.max(targetOut, outCost) || 1);
-        if (diffIn > 0.15 || diffOut > 0.15) return false;
-        if (context > 0 && targetNorm.contextSize > 0 && targetNorm.contextSize !== context) return false;
+          const diffIn = Math.abs(targetIn - inCost) / (Math.max(targetIn, inCost) || 1);
+          const diffOut = Math.abs(targetOut - outCost) / (Math.max(targetOut, outCost) || 1);
+          if (diffIn > 0.15 || diffOut > 0.15) return false;
+          if (context > 0 && targetNorm.contextSize > 0 && targetNorm.contextSize !== context) return false;
 
-        return true;
-      });
+          return true;
+        });
 
-      if (candidates.length > 0) {
-        candidates.sort((a, b) => extractVersionNumber(b.canonicalId) - extractVersionNumber(a.canonicalId));
-        const bestTarget = candidates[0];
+        if (candidates.length > 0) {
+          candidates.sort((a, b) => extractVersionNumber(b.canonicalId) - extractVersionNumber(a.canonicalId));
+          bestTarget = candidates[0];
+        }
+      }
+      if (bestTarget) {
 
         const targetNorm = bestTarget.normalizedOffers[providerId];
         targetNorm.alternateSlugs = targetNorm.alternateSlugs || [];

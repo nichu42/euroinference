@@ -17,6 +17,15 @@ on:
       - 'methodology.html'
       - 'privacy.html'
       - '.github/workflows/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'config/**'
+      - 'scripts/**'
+      - 'unify.js'
+      - 'data.js'
+      - '**/*.json'
+      - '.github/workflows/**'
   schedule:
     # Run twice a day (at 00:00 and 12:00 UTC)
     - cron: '0 */12 * * *'
@@ -39,6 +48,17 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
+
+      - name: Validate JSON
+        run: |
+          for f in config/*.json; do
+            echo "validating $f"
+            node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))"
+          done
+          git ls-files '*.json' | while read -r f; do
+            echo "validating $f"
+            node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))"
+          done
 
       - name: Pre-commit syntax checks
         run: |
@@ -63,6 +83,7 @@ jobs:
           node scripts/build_privacy.js
 
       - name: Commit and Push Changes
+        if: github.event_name != 'pull_request'
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"

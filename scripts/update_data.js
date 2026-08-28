@@ -8,12 +8,29 @@ if (fs.existsSync(envPath)) {
   }
 }
 const configDir = path.join(__dirname, '../config');
-const mistralModelMap = JSON.parse(fs.readFileSync(path.join(configDir, 'mistral_models.json'), 'utf8'));
-const normalizationMap = JSON.parse(fs.readFileSync(path.join(configDir, 'normalization.json'), 'utf8'));
+const mistralModelMap = JSON.parse(fs.readFileSync(path.join(configDir, 'mistral_pricing.json'), 'utf8'));
 const modelRegistry = JSON.parse(fs.readFileSync(path.join(configDir, 'models.json'), 'utf8'));
+const creatorsMap = JSON.parse(fs.readFileSync(path.join(configDir, 'creators.json'), 'utf8'));
+const providersMap = JSON.parse(fs.readFileSync(path.join(configDir, 'providers.json'), 'utf8'));
 const benchmarkMap = JSON.parse(fs.readFileSync(path.join(configDir, 'benchmark.json'), 'utf8'));
 const sovereigntyMap = JSON.parse(fs.readFileSync(path.join(configDir, 'sovereignty.json'), 'utf8'));
 const EuroUnify = require('../unify');
+
+// Human-friendly registry: config/models.json holds models with per-model aliases;
+// config/creators.json and config/providers.json hold global maps.
+// Keys starting with '_' are inline docs and ignored.
+function _stripDocKeys(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  const out = {};
+  let has = false;
+  for (const [k, v] of Object.entries(obj)) {
+    if (k.startsWith('_')) continue;
+    out[k] = v;
+    has = true;
+  }
+  return has ? out : null;
+}
+const _creatorMap = _stripDocKeys(creatorsMap) || {};
 
 const RETRY_LIMIT = 3;
 const RETRY_DELAY_MS = 1000;
@@ -63,18 +80,19 @@ function normalizeGeneratedModel(provider, model) {
   const ownerKey = String(rawOwner || '').toLowerCase().trim();
   const creator = provider === 'mistral'
     ? (/@regional$/i.test(model.id) ? 'Mistral AI Regional' : 'Mistral AI')
-    : (normalizationMap.creator_aliases[ownerKey] || rawOwner || 'Other');
+    : (_creatorMap[ownerKey] || rawOwner || 'Other');
   return {
     ...model,
     canonical_id: id,
     creator,
-    display_name: modelRegistry.models[id]?.display_name || normalizationMap.display_aliases?.[id] || normalizationMap.display_names?.[id] || model.name || id
+    display_name: modelRegistry.models[id]?.display_name || model.name || id
   };
 }
 
 function resolveRegistryModelId(provider, rawId) {
   const id = applyStrictAlias(rawId);
   for (const [canonicalId, entry] of Object.entries(modelRegistry.models || {})) {
+    if (entry.aliases && (entry.aliases.includes(rawId) || entry.aliases.includes(id) || entry.aliases.includes(rawId.toLowerCase()) || entry.aliases.includes(id.toLowerCase()))) return canonicalId;
     const slugs = entry.providers?.[provider]?.slugs || [];
     if (slugs.includes(rawId) || slugs.includes(id)) return canonicalId;
   }
@@ -103,11 +121,14 @@ function normalizeModelId(id) {
 }
 
 function applyStrictAlias(id) {
+  const rawLower = String(id || '').toLowerCase();
   let clean = normalizeModelId(id);
-  for (const aliases of Object.values(normalizationMap.provider_aliases || {})) {
-    clean = aliases[clean] || clean;
+  for (const [canonicalId, entry] of Object.entries(modelRegistry.models || {})) {
+    if (!entry.aliases) continue;
+    // check both raw and normalized forms (aliases are stored lowercased)
+    if (entry.aliases.includes(rawLower) || entry.aliases.includes(clean)) return canonicalId;
   }
-  return normalizationMap.strict_aliases[clean] || clean;
+  return clean;
 }
 
 async function run() {
@@ -562,7 +583,7 @@ function buildOpenRouterCatalog(rawModels) {
     if (!Number.isFinite(prompt) || !Number.isFinite(completion) || prompt <= 0 || completion <= 0) return [];
     const cacheRead = Number(pricing.input_cache_read);
     // Owner heuristic: prefer the display-name prefix ("DeepSeek: ..."), fall back to
-    // the id vendor segment ("deepseek/..."). Both resolve via normalization creator_aliases.
+    // the id vendor segment ("deepseek/..."). Both resolve via normalization `creators`.
     const namePrefix = typeof model.name === 'string' && model.name.includes(':')
       ? model.name.split(':')[0].toLowerCase().trim()
       : '';

@@ -133,9 +133,10 @@ The GitHub Actions workflow runs on relevant changes, twice daily, and on manual
 
 Contributor-maintained model dictionaries live in [`config/`](config/):
 
-- [`models.json`](config/models.json) contains canonical model families, display names, creators, provider slugs, and pricing labels.
-- [`mistral_models.json`](config/mistral_models.json) contains Mistral aliases and excluded product categories.
-- [`normalization.json`](config/normalization.json) contains shared creator, display, strict-alias, and provider-alias rules.
+- [`models.json`](config/models.json) is the model registry — `models` with per-model `display_name`/`creator`/`aliases`/`providers` (single format, `-latest` via `models.dev`).
+- [`creators.json`](config/creators.json) — creator alias → pretty (`"z.ai": "Zhipu AI"`).
+- [`providers.json`](config/providers.json) — provider id → pretty badge (`"mammouth": "Mammouth AI"`).
+- [`mistral_pricing.json`](config/mistral_pricing.json) contains only Mistral pricing-page aliases and excluded product categories (OCR/embed/moderation).
 - [`benchmark.json`](config/benchmark.json) defines the non-EU reference provider shown in the detail modal (OpenRouter) and its excluded product suffixes (`:free`, `:batch`).
 - [`sovereignty.json`](config/sovereignty.json) holds per-provider jurisdiction, retention, training, **hosting vs inference** region, and routing facts (source-linked; omitted = unknown, never fabricated). `hosting` = gateway/control plane, `processing_region` = model inference; `EU-Sovereign` = `jurisdiction EU` + `hosting EU` non-US + `inference EU` non-US + `(European model || open-weights)` on non-US infra.
 - [`config/README.md`](config/README.md) documents the schema and contribution conventions.
@@ -144,7 +145,7 @@ Prefer a narrow, explicit alias over a broad rule that could merge unrelated mod
 
 ## Validation
 
-Run the existing syntax and whitespace checks after changes:
+Run the existing syntax and JSON/whitespace checks after changes:
 
 ```powershell
 node --check app.js
@@ -155,9 +156,12 @@ node --check scripts/build_methodology.js
 node --check scripts/build_privacy.js
 node --check data.js
 git diff --check
+# JSON validity (also in pre-commit + CI on every PR)
+node -e "JSON.parse(require('fs').readFileSync('config/models.json','utf8'))"
+node -e "JSON.parse(require('fs').readFileSync('config/mistral_pricing.json','utf8'))"
 ```
 
-A `pre-commit` hook runs the same checks (`scripts/hooks/pre-commit`). Enable it once:
+A `pre-commit` hook runs the same checks (`scripts/hooks/pre-commit` — JS + `config/*.json` + staged `*.json` + `git diff --check`). Enable it once:
 
 ```powershell
 git config core.hooksPath scripts/hooks

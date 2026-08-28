@@ -2,22 +2,40 @@
 
 These files contain editable dictionaries used by `scripts/update_data.js`. They are the preferred place for provider-specific aliases, model names, and matching rules.
 
-## `models.json`
+**Where do I add …?** — most edits are now in one file.
 
-The model registry is model-centric. Each key under `models` is the canonical ID used to group offers across providers.
+| Want to … | Edit … | Example |
+|---|---|---|
+| Add / fix a model family (canonical id, display name, per-provider slugs / pricing names) | `config/models.json` → `models` | `mistral-large` with `slugs: ["mistral-large-latest"]` |
+| Fix Mistral pricing-page name → API slug, or exclude OCR/embed product | `config/mistral_pricing.json` | `aliases: {"mistral large 3": "mistral-large-latest"}`, `excluded_prefixes: ["ocr"]` |
+| Rename a creator / add alias `owned_by` variant | `config/creators.json` | `"z.ai": "Zhipu AI"` |
+| Rename a provider badge | `config/providers.json` | `"mammouth": "Mammouth AI"` |
+| Pretty name for a model | `config/models.json` → `models.<id>.display_name` | `"deepseek-r1": {display_name:"DeepSeek R1"}` |
+| Generic or provider alias → canonical | `config/models.json` → `models.<id>.aliases` or `.providers.<pid>.slugs` | `"deepseek-r1": {aliases:["r1"]}` or `slugs:["deepseek-r1-distill"]` |
+
+## `models.json` — model registry (single format, single file for models)
+
+Human-friendly — **change a name/slug/label here, not in `unify.js`** (engine only). Keys starting with `_` are inline docs and ignored. `creators`/`providers` are now in `config/creators.json` / `config/providers.json`.
 
 ```json
 {
+  "_help": "Model registry: canonicalId → display_name/creator/aliases/providers. Use models.dev id when available.",
+  "_where_to_edit": {
+    "add_new_model": "models — add canonicalId with display_name/creator",
+    "add_alias": "models.<id>.aliases — generic alias → canonical (all providers)",
+    "add_provider_slug": "models.<id>.providers.<pid>.slugs — per-provider id"
+  },
   "models": {
+    "deepseek-r1": {
+      "display_name": "DeepSeek R1",
+      "creator": "DeepSeek",
+      "aliases": ["r1"],
+      "providers": {}
+    },
     "glm-5.2": {
       "display_name": "GLM 5.2",
       "creator": "Zhipu AI",
-      "providers": {
-        "mistral": {
-          "slugs": ["glm-5-2", "zai-glm-5-2"],
-          "pricing_names": ["glm 5.2", "z.ai glm 5.2"]
-        }
-      }
+      "providers": { "mistral": { "slugs": ["glm-5-2"], "pricing_names": ["glm 5.2"] } }
     }
   }
 }
@@ -25,41 +43,36 @@ The model registry is model-centric. Each key under `models` is the canonical ID
 
 Fields:
 
-- `models`: object containing one entry per known model family.
-- Model key: canonical ID used for cross-provider grouping. Use lowercase and stable names.
-- `display_name`: name shown in the table and detail view.
-- `creator`: normalized model creator shown in creator filters.
-- `providers`: provider-specific matching data.
-- `providers.<provider>.slugs`: API or catalog IDs used by that provider. Add every known version or alias.
-- `providers.<provider>.pricing_names`: exact lower-case names used on a provider pricing page.
+- `models`: object containing one entry per model family. Sorted A–Z.
+  - Model key: canonical ID used for cross-provider grouping. Use lowercase and stable names. **Use `models.dev` id when available as canonical (official slug)** — e.g. `openai/gpt-4o` → `gpt-4o`.
+  - `display_name`: name shown in the table and detail view. Overwritten by `models.dev` `name` when enriched (`218/475`).
+  - `creator`: normalized model creator shown in creator filters. Overwritten by `models.dev` lab when enriched.
+  - `aliases`: generic `alias → canonical` for all providers (e.g. `["r1"]` for `deepseek-r1`). Use sparingly; prefer `providers.<pid>.slugs` for per-provider ids. Sorted A–Z.
+  - `providers`: provider-specific matching data.
+  - `providers.<provider>.slugs`: API or catalog IDs used by that provider. Add every known version or alias.
+  - `providers.<provider>.pricing_names`: exact lower-case names used on a provider pricing page.
 
-Unknown models can still be included through conservative generic normalization, but explicit entries are preferred because they prevent incorrect cross-provider matches.
+Unknown models can still be included through conservative generic normalization, but explicit entries are preferred.
 
-## `mistral_models.json`
+Pipeline: `scripts/update_data.js:11` reads `config/models.json` (`models` with per-model `aliases`/`slugs`) + `config/creators.json`/`config/providers.json`, `unify.js:13` reads `creators.json`/`providers.json` for browser fallback. Rule: **change a model/slug/alias → `config/models.json`**, **change a creator/provider → `config/creators.json`/`providers.json`**, **change a rule/heuristic → `unify.js`**.
 
-This file contains Mistral-specific pricing and exclusion rules.
+## `creators.json`
 
-- `aliases`: maps normalized pricing-page names to Mistral API slugs.
-- `api_aliases`: maps alternate API IDs to the preferred API ID.
-- `excluded_prefixes`: pricing-page product prefixes excluded from the token comparison, such as OCR, audio, embedding, moderation, and classifier products.
+Global `alias → pretty` for `owned_by`/`lab` strings (lowercase, substring `raw includes key`). Sorted A–Z. Source of truth for `unify.js:CREATOR_NAMES` (fallback hardcoded, `scripts/update_data.js:33` reads this file). Example: `"z.ai": "Zhipu AI"`.
 
-Known model entries in `models.json` take precedence. Keep this file for Mistral-specific exceptions and exclusions.
+## `providers.json`
 
-## `normalization.json`
+Global `providerId → pretty` badge name (e.g. `"mammouth": "Mammouth AI"`). Sorted A–Z. Source of truth for `unify.js:PROVIDER_DISPLAY_NAMES`.
 
-This file contains shared normalization dictionaries — **change a name/slug here, not in `unify.js`** (engine only, see below).
+## `mistral_pricing.json` (formerly `mistral_models.json`)
 
-- `creator_aliases`: maps raw provider owner strings to consistent creator names.
-- `creator_names`: canonical `lab` → pretty name map used by `unify.js:CREATOR_NAMES` (fallback hardcoded, overridden live from this file in Node). Change a lab name here.
-- `provider_display_names`: `providerId` → pretty name map used by `unify.js:PROVIDER_DISPLAY_NAMES` (fallback hardcoded, overridden live from this file in Node). Change a provider badge here.
-- `display_names`: display-name overrides for canonical IDs.
-- `strict_aliases`: cross-provider aliases that always resolve to the same canonical model ID.
-- `provider_aliases`: provider-specific ID transformations, grouped by provider family.
-- `display_aliases`: shared display-name overrides applied by the updater.
+This file contains **only Mistral pricing-page quirks** — not the model registry. Used only by `scripts/update_data.js:parseMistralCatalog()` to join `https://docs.mistral.ai/inference/pricing` to `https://api.mistral.ai/v1/models`.
 
-Rule: **change a name/slug/label → `config/`**, **change a rule/heuristic → `unify.js`** (e.g., `getCleanModelId`, `regionBucketFromCode`).
+- `aliases`: normalized pricing-page name (lowercase, e.g. `"mistral large 3"`) → API slug (`"mistral-large-latest"`). Needed when the pricing page label doesn't match an API `id`.
+- `api_aliases`: alternate API `id` → preferred `id` (e.g. `"mistral-medium-3-5": "mistral-medium-latest"`).
+- `excluded_prefixes`: pricing-page product prefixes **excluded** from the token comparison — OCR, `voxtral`, `mistral embed`/`codestral embed`, `moderation`, `classifier` etc.
 
-Prefer adding a model to `models.json` when the rule involves a specific model. Use `normalization.json` for reusable provider-wide rules.
+`config/models.json` always wins for `display_name`/`creator`/`slugs`/`pricing_names`. Keep this file for Mistral-specific exceptions and exclusions only.
 
 ## `benchmark.json`
 
@@ -106,10 +119,10 @@ This file holds data-sovereignty facts per provider (jurisdiction, retention, tr
 
 ## Contribution Guidelines
 
-- Keep all files valid JSON. JSON does not support comments.
+- Keep all files valid JSON. JSON does not support comments. `pre-commit` (`scripts/hooks/pre-commit`) and CI (`.github/workflows/update_data.yml:43` `Validate JSON` on every PR) check every `*.json` via `JSON.parse`; `node --check` is JS-only.
 - Use lowercase keys for model IDs, pricing labels, aliases, and owner strings.
 - Use arrays when multiple slugs or pricing names refer to the same model.
 - Do not add API keys, credentials, or private provider data.
 - Avoid broad aliases that could merge unrelated model families.
 - Add an explicit exclusion when a product is not priced per input/output token.
-- Run `node scripts/update_data.js` and the project validation checks before submitting changes.
+- Run `node scripts/update_data.js` and the project validation checks (`node --check` + `JSON.parse` + `git diff --check`) before submitting changes.

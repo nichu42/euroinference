@@ -1,4 +1,5 @@
 {
+  "_help": "Mistral pricing-page quirks only — not the model registry. aliases: pricing label (lowercase) → API slug; api_aliases: alternate API id → preferred id; excluded_prefixes: pricing page products to skip (OCR/embed/moderation/classifier). See config/README.md#mistral_pricing.json. Keys starting with _ are docs.",
   "aliases": {
     "mistral large 3": "mistral-large-latest",
     "mistral large": "mistral-large-latest",

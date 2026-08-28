@@ -12,6 +12,19 @@ else
       node --check "$f" || exit 1
     fi
   done
+  # JSON validity — every staged *.json + all config/*.json
+  for f in config/*.json; do
+    if [ -f "$f" ]; then
+      echo "  json check $f"
+      node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" || exit 1
+    fi
+  done
+  for f in $(git diff --cached --name-only --diff-filter=ACM | grep -E '\.json$' || true); do
+    if [ -f "$f" ]; then
+      echo "  json check $f (staged)"
+      node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" || exit 1
+    fi
+  done
 fi
 
 # Whitespace errors
