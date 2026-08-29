@@ -731,6 +731,7 @@ function buildUnifiedModels(options) {
   const providers = options.providers || {};
   const sovereigntyConfig = options.sovereignty || null;
   const modelsDevCatalog = options.modelsDev || null;
+  const deggoCatalog = options.deggo || null;
   // Build models.dev lookup by clean ids for enrichment – see https://models.dev/models.json (provider-agnostic)
   const devByClean = new Map();
   if (modelsDevCatalog && typeof modelsDevCatalog === 'object' && !Array.isArray(modelsDevCatalog)) {
@@ -1154,7 +1155,88 @@ function buildUnifiedModels(options) {
     if (dev.description) m.description = dev.description;
   }
 
-  return { models: unified, sovereigntyMeta };
+  // Enrich with readable benchmarks (models.deggo.fyi) — Quality v4 (deggo) + EUR Value (EuroInference heuristic)
+  const deggoByClean = new Map();
+  if (Array.isArray(deggoCatalog)) {
+    for (const e of deggoCatalog) {
+      if (!e || !e.slug) continue;
+      const clean = e.clean || getCleanModelId(String(e.slug));
+      if (clean && !deggoByClean.has(clean)) deggoByClean.set(clean, e);
+      const slug = normalizeSlug(String(e.slug));
+      if (slug && !deggoByClean.has(slug)) deggoByClean.set(slug, e);
+    }
+  }
+  function findDeggoEntry(canonicalId) {
+    if (!canonicalId || deggoByClean.size === 0) return null;
+    const clean = getCleanModelId(canonicalId);
+    if (deggoByClean.has(clean)) return deggoByClean.get(clean);
+    const slug = normalizeSlug(canonicalId);
+    if (deggoByClean.has(slug)) return deggoByClean.get(slug);
+    for (const [k, v] of deggoByClean.entries()) {
+      if (k.endsWith(clean) || clean.endsWith(k)) return v;
+    }
+    return null;
+  }
+  // deggo stores the rating under a slug that doesn't match our canonical id for the real
+  // release. Route each deggo slug to the correct unified row:
+  //   deepseek-v4-flash      -> deepseek-v4-flash-0731  (deggo names it "Flash 0731")
+  //   deepseek-v4-pro        -> deepseek-v4-pro-0813    (deggo names it "Pro 0813")
+  //   deepseek-v4-pro-0424   -> deepseek-v4-pro         (April Pro 52.0 -> undated base Pro)
+  // Undated/preview rows don't inherit a score meant for a different release.
+  // Load deggo-slug -> canonical-id remap from config (contributor-maintained). Falls back to
+  // empty when unavailable (e.g. browser fallback path, or file missing) — base matching then applies.
+  let DEGGO_SLUG_TO_UNIFIED = {};
+  if (typeof require === 'function') {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const mapPath = path.join(__dirname, 'config', 'deggo_slug_map.json');
+      const raw = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+      for (const k of Object.keys(raw)) {
+        if (k === '_help') continue;
+        DEGGO_SLUG_TO_UNIFIED[k] = raw[k];
+      }
+    } catch (e) { /* no remap available */ }
+  }
+  const unifiedIds = new Set(unified.map(m => m.id));
+  const deggoFor = new Map(); // unifiedId -> deggo entry (resolved, no duplicates)
+  const assignDeggo = (unifiedId, d) => {
+    if (unifiedIds.has(unifiedId) && !deggoFor.has(unifiedId)) deggoFor.set(unifiedId, d);
+  };
+  for (const m of unified) {
+    const d = findDeggoEntry(m.id);
+    if (!d) continue;
+    assignDeggo(DEGGO_SLUG_TO_UNIFIED[d.slug] || m.id, d);
+  }
+  // Cover deggo entries (e.g. deepseek-v4-pro-0424) that no unified row looks up directly.
+  if (Array.isArray(deggoCatalog)) {
+    for (const e of deggoCatalog) {
+      if (!e || !e.slug) continue;
+      const target = DEGGO_SLUG_TO_UNIFIED[e.slug];
+      if (!target) continue;
+      const key = e.clean || getCleanModelId(String(e.slug));
+      const d = deggoByClean.get(key) || deggoByClean.get(normalizeSlug(String(e.slug))) || null;
+      if (d) assignDeggo(target, d);
+    }
+  }
+  for (const m of unified) {
+    const d = deggoFor.get(m.id);
+    if (!d) continue;
+    const qv = Number.isFinite(d.qualityValue) ? d.qualityValue : null;
+    // Only deggo-generated Quality is persisted; Value is EU-blended (quality × affordabilityEU) computed live
+    m.deggo = {
+      slug: d.slug,
+      qualityValue: qv,
+    };
+  }
+
+  // Build deggo meta (provenance for UI footer) when catalog was supplied
+  let deggoMeta = null;
+  if (Array.isArray(deggoCatalog)) {
+    deggoMeta = { source: 'https://models.deggo.fyi/docs', count: deggoCatalog.length, formula: 'Quality v4 (deggo) · EUR Value (EuroInference: Quality × affordabilityEU, EU cheapest blended (in+out)/2)' };
+  }
+
+  return { models: unified, sovereigntyMeta, deggoMeta };
 }
 
 const EuroUnify = {
@@ -1176,7 +1258,6 @@ const EuroUnify = {
   getNativeOutputCost,
   cacheSupportState,
   normalizeOffer,
-  resolveOfferSovereignty,
   buildUnifiedModels
 };
 

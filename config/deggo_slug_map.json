@@ -1,0 +1,9 @@
+{
+  "_help": "Maps a deggo (models.deggo.fyi) model slug to the canonical unified-model id it should be attributed to, when deggo stores the rating under a slug that does not match our id for the real release. Example: deggo rates slug 'deepseek-v4-flash' but names the entry 'Flash 0731' (release 2026-07-31), which is our 'deepseek-v4-flash-0731'; the undated 'deepseek-v4-flash' preview row is left unrated. Key = deggo slug, value = our canonical unified id. Contributor-maintained; keep entries sorted A-Z by key.",
+  "deepseek-v4-flash": "deepseek-v4-flash-0731",
+  "deepseek-v4-pro": "deepseek-v4-pro-0813",
+  "deepseek-v4-pro-0424": "deepseek-v4-pro",
+  "gemini-3-5-flash-medium": "gemini-3.5-flash",
+  "grok-4-3-medium": "grok-4.3",
+  "qwen3-8-max": "qwen3.8"
+}

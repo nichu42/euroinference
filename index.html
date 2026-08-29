@@ -10,12 +10,40 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="EuroInference: Direct multi-provider pricing and feature comparison dashboard for European LLM providers.">
   <title>EuroInference | Multi-Provider LLM Pricing Compare</title>
+  <link rel="canonical" href="https://euroinference.eu/">
+  <meta name="author" content="nichu42">
+  <meta name="robots" content="index, follow">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0b1020" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta property="og:title" content="EuroInference | Multi-Provider LLM Pricing Compare">
+  <meta property="og:description" content="Compare open LLM models, prices, context windows, and provider availability across European AI infrastructure — with Quality/Value scores, caching economics, and data-sovereignty badges.">
+  <meta property="og:url" content="https://euroinference.eu/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="EuroInference">
+  <meta property="og:image" content="https://euroinference.eu/assets/logo_250px.webp">
+  <meta property="og:locale" content="en">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="EuroInference | Multi-Provider LLM Pricing Compare">
+  <meta name="twitter:description" content="Compare models and pricing across European LLM providers — Quality/Value, caching, and sovereignty.">
+  <meta name="twitter:image" content="https://euroinference.eu/assets/logo_250px.webp">
   <link rel="icon" type="image/webp" href="assets/logo_100px.webp">
   <link rel="apple-touch-icon" href="assets/logo_250px.webp">
-  <link rel="stylesheet" href="styles.css?v=20260817">
+  <link rel="stylesheet" href="styles.css?v=20260838">
   <script>
     const savedTheme = localStorage.getItem('euroinference-theme');
     document.documentElement.dataset.theme = savedTheme || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "EuroInference",
+    "url": "https://euroinference.eu/",
+    "description": "Direct multi-provider pricing and feature comparison dashboard for European LLM providers.",
+    "inLanguage": "en",
+    "license": "https://github.com/nichu42/euroinference/blob/main/LICENSE"
+  }
   </script>
 </head>
 <body>
@@ -67,29 +95,92 @@
     <div class="dashboard-grid">
       <!-- Main Display Panel -->
       <main class="main-content">
-        <!-- Workload Estimator -->
-        <section class="workload-panel" aria-label="Your workload inputs" data-theme-step>
+        <!-- Filters: most important & pre-filters always visible -->
+        <section class="workload-panel workload-panel--merged" aria-label="Filters and workload" data-theme-step>
+          <!-- Always visible: Model selection (most important + our pre-filter presets) -->
+          <fieldset class="cache-settings" aria-label="Model selection" style="margin-top:0; padding-top:0; border-top:none;">
+            <div class="model-filter-grid">
+              <label class="workload-field">
+                <span class="workload-label">Search</span>
+                <input type="text" id="filter-id" placeholder="🔍 Search model..." class="header-filter-input" style="width:100%;">
+              </label>
+              <label class="workload-field">
+                <span class="workload-label">Creator</span>
+                <select id="filter-creator" class="header-filter-select"><option value="all">All Creators</option></select>
+              </label>
+              <label class="workload-field">
+                <span class="workload-label">Provider</span>
+                <div class="provider-filter-dropdown" id="filter-source-dropdown" style="width:100%;">
+                  <button type="button" class="provider-filter-toggle" id="filter-source-toggle" aria-haspopup="true" aria-controls="filter-source-menu" aria-expanded="false">All Providers</button>
+                  <div class="provider-filter-menu" id="filter-source-menu" role="group" aria-label="Provider filters" hidden>
+                    <label class="provider-filter-option"><input type="checkbox" value="matched"> <span>Multi-provider (>=2)</span></label>
+                    <label class="provider-filter-option"><input type="checkbox" value="cortecs"> <span>Cortecs</span></label>
+                    <label class="provider-filter-option"><input type="checkbox" value="edenai"> <span>Eden AI</span></label>
+                    <label class="provider-filter-option"><input type="checkbox" value="eurouter"> <span>EURouter</span></label>
+                    <label class="provider-filter-option"><input type="checkbox" value="greenpt"> <span>GreenPT</span></label>
+                    <label class="provider-filter-option"><input type="checkbox" value="mammouth"> <span>Mammouth AI</span></label>
+                    <label class="provider-filter-option"><input type="checkbox" value="mistral"> <span>Mistral AI</span></label>
+                    <label class="provider-filter-option"><input type="checkbox" value="mistral-regional"> <span>Mistral AI Regional</span></label>
+                    <label class="provider-filter-option"><input type="checkbox" value="opper"> <span>Opper AI</span></label>
+                    <label class="provider-filter-option"><input type="checkbox" value="requesty"> <span>Requesty AI</span></label>
+                  </div>
+                </div>
+              </label>
+              <label class="workload-field">
+                <span class="workload-label">Min context (tokens)</span>
+                <input type="number" id="filter-context-size" min="0" step="1024" value="32000" placeholder="Min tokens" class="header-filter-input" title="Show models with at least this many context tokens">
+              </label>
+            </div>
+            <div class="cache-controls" style="margin-top:0.9rem;">
+              <label class="cache-only-option" title="Variant-aware: latest 2 distinct versions per family (e.g., GLM 5.3 + 5.2, flash separate). Uncheck to show all versions.">
+                <input type="checkbox" id="filter-dedupe" checked>
+                <span>Latest 2 releases per family</span>
+              </label>
+              <label class="cache-reuse-field" title="Filter by model release date (models.dev).">
+                <span class="cache-label">Released</span>
+                <select id="filter-date" class="header-filter-select" style="padding:4px 8px; font-size:0.78rem;">
+                  <option value="all">All time</option>
+                  <option value="6m">Last 6 months</option>
+                  <option value="12m" selected>Last 12 months</option>
+                  <option value="18m">Last 18 months</option>
+                  <option value="24m">Last 24 months</option>
+                </select>
+              </label>
+              <label class="cache-only-option" title="When a date filter is active, hide models with no known release date.">
+                <input type="checkbox" id="filter-hide-unknown" checked>
+                <span>Hide models with unknown release date</span>
+              </label>
+              <label class="cache-only-option" title="Checked: the Cost column applies your prompt-caching assumptions (blended cache rates). Unchecked: plain listed input/output prices.">
+                <input type="checkbox" id="filter-cache-aware" checked>
+                <span>Cache-adjusted cost</span>
+              </label>
+              <label class="cache-only-option" title="Hide offers from providers without prompt-caching support or published cache rates. Non-caching offers are excluded from every column; models without any such offer disappear.">
+                <input type="checkbox" id="filter-cache-only">
+                <span>Only caching-capable providers</span>
+              </label>
+            </div>
+          </fieldset>
+
           <details class="workload-settings">
             <summary class="workload-settings-summary">
-              <span class="workload-settings-title">Workload assumptions &amp; price filters</span>
-              <span class="workload-settings-help">Adjust tokens, prompt-caching assumptions and price ranges<span id="workload-active-hint" class="workload-active-hint" hidden>caching filter on</span></span>
+              <span style="flex:1;"></span>
+              <span class="workload-settings-help">Token assumptions, caching and price ranges</span>
             </summary>
             <div class="workload-settings-content">
-              <div class="workload-grid">
-                <label class="workload-field">
-                  <span class="workload-label">Input / request</span>
-                  <input type="number" id="filter-input-tokens" min="1" step="500" value="10000">
-                  <span class="workload-suffix">tokens</span>
-                </label>
-                <label class="workload-field">
-                  <span class="workload-label">Output / request</span>
-                  <input type="number" id="filter-output-tokens" min="1" step="100" value="1000">
-                  <span class="workload-suffix">tokens</span>
-                </label>
-              </div>
-              <fieldset class="cache-settings" aria-label="Prompt caching assumptions">
-                <legend>Prompt caching</legend>
+              <!-- Workload & caching (combined on one line) -->
+              <fieldset class="cache-settings" aria-label="Workload and caching">
+                <legend>Workload & caching</legend>
                 <div class="cache-controls">
+                  <label class="workload-field">
+                    <span class="workload-label">Input</span>
+                    <input type="number" id="filter-input-tokens" min="1" step="500" value="50000">
+                    <span class="workload-suffix">tokens</span>
+                  </label>
+                  <label class="workload-field">
+                    <span class="workload-label">Output</span>
+                    <input type="number" id="filter-output-tokens" min="1" step="100" value="5000">
+                    <span class="workload-suffix">tokens</span>
+                  </label>
                   <div class="cache-share-group" role="group" aria-label="Assumed share of input tokens served from cache">
                     <span class="cache-label">Cached input</span>
                     <button type="button" class="cache-chip" data-share="0" aria-pressed="false" title="No cached input assumed (plain chat workloads)">Chat 0%</button>
@@ -100,21 +191,15 @@
                     <span class="cache-label">Reuses</span>
                     <select id="filter-cache-reuse">
                       <option value="2">2×</option>
-                      <option value="4" selected>4×</option>
-                      <option value="8">8×</option>
+                      <option value="4">4×</option>
+                      <option value="8" selected>8×</option>
                       <option value="Infinity">Steady state (∞)</option>
                     </select>
                   </label>
-                  <label class="cache-only-option" title="Hide offers from providers without prompt-caching support or published cache rates. Non-caching offers are excluded from every column; models without any such offer disappear.">
-                    <input type="checkbox" id="filter-cache-only">
-                    <span>Only caching-capable providers</span>
-                  </label>
                 </div>
-                <details class="cache-math-help">
-                  <summary>How is this calculated?</summary>
-                  <div id="cache-math-explainer" class="cache-math-explainer"></div>
-                </details>
               </fieldset>
+
+              <!-- Price -->
               <div class="cost-filter-grid" aria-label="Cost range filters">
                 <fieldset class="cost-filter">
                   <legend>Input price</legend>
@@ -148,67 +233,29 @@
         <!-- Explorer Table -->
         <section data-theme-step>
           <div class="update-warning" id="update-warning" role="status" hidden></div>
+          <div class="table-toolbar">
+            <span id="model-count-display" class="table-count" aria-live="polite">… shown</span>
+            <button type="button" id="show-all-btn" class="show-all-btn" title="Clear all filters and show every model">Remove all filters</button>
+          </div>
           <div class="table-wrapper">
             <table class="models-table" id="models-explorer-table">
               <thead>
-                <!-- Sort headers -->
                 <tr>
-              <th class="sortable active-sort" data-sort="id">Model Name <span class="sort-indicator">▲</span><br><span id="model-count-display" aria-live="polite"></span></th>
-                  <th class="sortable" data-sort="creator">Creator <span class="sort-indicator"></span></th>
-                  <th>Providers</th>
-                  <th class="sortable" data-sort="context">Minimum Context Window <span class="sort-indicator"></span></th>
-                  <th class="sortable" data-sort="input">Lowest Input Price / 1M <span class="sort-indicator"></span></th>
-                  <th class="sortable" data-sort="output">Lowest Output Price / 1M <span class="sort-indicator"></span></th>
-                  <th class="sortable" data-sort="workload" id="workload-col-header" title="Total cost for a single request using your workload inputs and the cheapest offer. With 'prompt caching' checked below, cached input tokens are priced with blended cache rates (see methodology). Edit inputs above the table.">Cost (your workload) <span class="sort-indicator"></span><span id="cost-header-suffix" class="cache-adjusted-suffix" title="Cache-adjusted: includes your prompt-caching assumptions">cache-adjusted</span></th>
-              <th>Lowest-Price Provider</th>
-            </tr>
-                <!-- Inline Header Filters -->
-                <tr class="header-filters-row">
-                  <th>
-                    <input type="text" id="filter-id" placeholder="🔍 Search / filter model..." class="header-filter-input">
-                  </th>
-                  <th>
-                    <select id="filter-creator" class="header-filter-select">
-                      <option value="all">All Creators</option>
-                    </select>
-                  </th>
-                  <th>
-                    <div class="provider-filter-dropdown" id="filter-source-dropdown">
-                      <button type="button" class="provider-filter-toggle" id="filter-source-toggle" aria-haspopup="true" aria-controls="filter-source-menu" aria-expanded="false">
-                        All Providers
-                      </button>
-                      <div class="provider-filter-menu" id="filter-source-menu" role="group" aria-label="Provider filters" hidden>
-                        <label class="provider-filter-option"><input type="checkbox" value="matched"> <span>Multi-provider (>=2)</span></label>
-                        <label class="provider-filter-option"><input type="checkbox" value="cortecs"> <span>Cortecs</span></label>
-                        <label class="provider-filter-option"><input type="checkbox" value="edenai"> <span>Eden AI</span></label>
-                        <label class="provider-filter-option"><input type="checkbox" value="eurouter"> <span>EURouter</span></label>
-                        <label class="provider-filter-option"><input type="checkbox" value="greenpt"> <span>GreenPT</span></label>
-                        <label class="provider-filter-option"><input type="checkbox" value="mammouth"> <span>Mammouth AI</span></label>
-                        <label class="provider-filter-option"><input type="checkbox" value="mistral"> <span>Mistral AI</span></label>
-                        <label class="provider-filter-option"><input type="checkbox" value="mistral-regional"> <span>Mistral AI Regional</span></label>
-                        <label class="provider-filter-option"><input type="checkbox" value="opper"> <span>Opper AI</span></label>
-                        <label class="provider-filter-option"><input type="checkbox" value="requesty"> <span>Requesty AI</span></label>
-                      </div>
-                    </div>
-                  </th>
-                  <th>
-                    <input type="number" id="filter-context-size" min="0" step="1024" value="32000" placeholder="Min tokens" class="header-filter-input" title="Show models with at least this many context tokens">
-                  </th>
-                  <th></th>
-                  <th></th>
-                  <th>
-                    <label class="th-cache-toggle" title="Checked: the Cost column applies your prompt-caching assumptions (blended cache rates). Unchecked: plain listed input/output prices.">
-                      <input type="checkbox" id="filter-cache-aware" checked>
-                      <span>prompt caching</span>
-                    </label>
-                  </th>
-                  <th></th>
+                  <th class="sortable" data-sort="id" title="Model Name">Models <span class="sort-indicator"></span></th>
+                  <th class="sortable" data-sort="creator" title="Creator / Lab">Labs <span class="sort-indicator"></span></th>
+                  <th class="sortable active-sort" data-sort="value" title="EUR Value Score 0-100 — Quality × affordabilityEU (cheapest EU offer's (in+out)/2, same offer). Higher is better. affordability = 1/(1+log10(1+blended*8)*0.45).">Value <span class="sort-indicator">▼</span></th>
+                  <th class="sortable" data-sort="quality" title="Quality Score 0-100 — deggo Quality v4, via models.deggo.fyi. See models.deggo.fyi/docs for methodology. Higher is better.">Quality <span class="sort-indicator"></span></th>
+                  <th class="sortable" data-sort="context" title="Minimum Context Window across providers">Context <span class="sort-indicator"></span></th>
+                  <th class="sortable" data-sort="input" title="Lowest Input Price per 1M tokens">Input <span class="sort-indicator"></span></th>
+                  <th class="sortable" data-sort="output" title="Lowest Output Price per 1M tokens">Output <span class="sort-indicator"></span></th>
+                  <th class="sortable" data-sort="workload" id="workload-col-header" title="Total cost for a single request using your workload inputs and the cheapest offer. With 'prompt caching' checked below, cached input tokens are priced with blended cache rates (see methodology). Edit inputs above the table.">Workload Cost <span class="sort-indicator"></span></th>
+                  <th title="All providers offering this model — cheapest first, highlighted (★). Prices use cache-adjusted workload cost when enabled.">Providers</th>
                 </tr>
               </thead>
               <tbody id="models-table-body">
                 <!-- Initial loading placeholder; cleared on first renderTable() call. -->
                 <tr id="loading-row">
-                  <td colspan="8">
+                  <td colspan="9">
                     <div class="loading-state">
                       <div class="loading-spinner" aria-hidden="true"></div>
                       <div class="loading-text">Loading model data…</div>
@@ -228,8 +275,8 @@
         <div style="font-family:var(--font-title, sans-serif); font-size:0.8rem; font-weight:800; text-transform:uppercase; letter-spacing:0.06em; color:var(--savings-color); margin-bottom:0.4rem;">
           Important Notice & Non-Liability
         </div>
-        <p>
-          EuroInference is an open-source, non-commercial informational tool designed for comparative benchmarking. Model identifiers, specifications, and listed rates are automatically aggregated and normalized from public third-party provider APIs and official European Central Bank (ECB) reference rates. All pricing figures represent net estimates excluding statutory Value Added Tax (VAT) and provider-specific billing surcharges. Converted figures reflect periodic ECB reference benchmarks rather than real-time transactional spot rates. While all information is maintained with reasonable care, data is provided on an 'as is' basis without representations, warranties, or liability beyond mandatory statutory limits. All product names, logos, and brands belong to their respective owners and do not constitute an endorsement or affiliation. Users must independently verify binding service level agreements, live rate sheets, token accounting methods, and quotas directly with each respective provider before deployment. Price comparisons do not assess overall suitability. Cache-adjusted workload figures depend on user-selected assumptions (cached input share, reuse rounds) and published provider cache rates; offers without published rates are estimated at full input price. All formulas, fallback rules and calibration are documented in the <a href="methodology.html" class="footer-link">Cost &amp; Caching Methodology</a>. Verify provider features, limits, latency, reliability, privacy, security, and service terms before deployment.
+                <p>
+          EuroInference is an open-source, non-commercial informational tool for comparative benchmarking. Model identifiers, prices, and specifications are automatically aggregated and normalized from public provider catalogs, pricing pages, and ECB reference rates; normalized records may not match the provider's live display verbatim and may lag the last refresh shown in the header (typically twice daily). All figures are net estimates excluding VAT/surcharges; converted figures use periodic ECB benchmarks, not real-time spot rates. Information is provided on an "as is" basis without representations, warranties, or liability beyond mandatory statutory limits. Product names belong to their owners; no endorsement or affiliation is implied. Price, Quality, and Value comparisons do not assess overall suitability. Always verify live rates, limits, features, and terms directly with the provider before deployment. See <a href="methodology.html" class="footer-link">Methodology</a> for full details on sources, calculations, and assumptions.
         </p>
       </div>
 

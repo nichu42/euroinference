@@ -41,12 +41,17 @@ Never commit `.env`, credentials, provider tokens, or private API responses.
 | --- | --- |
 | `index.html` | Dashboard markup and static metadata |
 | `styles.css` | Dashboard styling and responsive layout |
-| `app.js` | Browser-side filtering, normalization, comparison, and rendering |
-| `data.js` | Generated provider and exchange-rate cache; do not edit manually |
-| `scripts/update_data.js` | Provider refresh, validation, normalization, and serialization |
+| `app.js` | Browser-side filtering, limits, cost/caching math, and rendering |
+| `unify.js` | Shared model unification engine (grouping, creator/region/sovereignty, capability consensus) |
+| `data.js` | Generated pre-unified cache (`UNIFIED_MODELS`, exchange rate, sovereignty meta); do not edit manually |
+| `scripts/update_data.js` | Provider fetch, validation, normalization, and generation of `data.js` |
 | `scripts/serve.js` | Small local static HTTP server |
-| `config/` | Contributor-maintained model aliases and normalization dictionaries |
-| `.github/workflows/update_data.yml` | Scheduled and event-driven data refresh |
+| `scripts/build_credits.js` / `build_methodology.js` / `build_privacy.js` | Generators for `credits.html` / `methodology.html` / `privacy.html` from MD |
+| `config/` | Contributor-maintained dictionaries: `models.json` (model registry), `creators.json`, `providers.json`, `sovereignty.json`, `mistral_pricing.json`, `benchmark.json` |
+| `METHODOLOGY.md` / `methodology.html` | Cost & caching methodology (source + generated HTML) |
+| `PRIVACY.md` / `privacy.html` | Legal disclosures and privacy policy (source + generated HTML) |
+| `CREDITS.md` / `credits.html` | Attribution for data sources, fonts, and artwork |
+| `.github/workflows/update_data.yml` | Scheduled and event-driven data refresh + HTML regeneration |
 
 ## Configuration and provider data
 
@@ -76,8 +81,13 @@ Use the pull request template and describe both what changed and why. Keep each 
 Before submitting:
 
 - Run `node --check app.js`.
+- Run `node --check unify.js`.
 - Run `node --check scripts/update_data.js`.
+- Run `node --check scripts/build_credits.js`.
+- Run `node --check scripts/build_methodology.js`.
+- Run `node --check scripts/build_privacy.js`.
 - Run `node --check data.js` when the generated cache changes.
+- Run `node scripts/build_credits.js` when `CREDITS.md` changes.
 - Run `node scripts/build_privacy.js` when `PRIVACY.md` changes.
 - Run `node scripts/build_methodology.js` and re-verify the worked examples against app output when pricing or caching logic changes.
 - Run `git diff --check`.

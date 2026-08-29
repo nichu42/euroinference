@@ -12,7 +12,7 @@ This file is intentionally gitignored. It contains local workflow notes for codi
 - CI auto-update commits land on `main` frequently (data.js-only). Fetch and rebase onto `origin/main` before pushing; expect the push to trigger a fresh data regeneration.
 - Do not commit `.env` or expose API keys in logs, generated files, or comments.
 - Treat `config/` as the contributor-maintained source of model aliases, slugs, display names, creators, and exclusions — **change a name/slug/label → `config/`**, **change a rule/heuristic → `unify.js`** (`getCleanModelId`, `regionBucketFromCode`, grouping). `config/sovereignty.json` additionally holds source-linked jurisdiction/retention/training/**hosting vs inference**/routing facts (`hosting` = gateway/control plane, `processing_region` = model inference; `EU-Sovereign` = `jurisdiction EU` + `hosting EU` non-US + `inference EU` non-US + European/open-weights on non-US EU infra); omitted blocks mean unknown — never fabricate or silently fill in. `config/creators.json`/`config/providers.json` are source of truth for `unify.js:CREATOR_NAMES`/`PROVIDER_DISPLAY_NAMES` (fallback hardcoded, overridden live from config in Node).
-- Generic model facts (lab, modalities, reasoning, tool_call, weights, release, limits, description) are source of truth from `https://models.dev/models.json` (`MIT`) via `scripts/update_data.js` → `UNIFIED_MODELS[].modelsDev` (`218/475` enriched); provider-specific pricing/limits/sovereignty stay per-provider — do not overwrite provider cost fields with `models.dev` values.
+- Generic model facts (lab, modalities, reasoning, tool_call, weights, release, limits, description) are source of truth from `https://models.dev/models.json` (`MIT`) via `scripts/update_data.js` → `UNIFIED_MODELS[].modelsDev` (enriched when matched — verify via `data.js`); provider-specific pricing/limits/sovereignty stay per-provider — do not overwrite provider cost fields with `models.dev` values.
 
 ## Common Commands
 
@@ -60,7 +60,7 @@ Update these files instead of hardcoding provider-specific aliases in executable
 - Never fabricate cache rates. `scripts/update_data.js` drops invalid/non-positive cache values during generation; zero means "not offered" (EURouter sentinel), never free.
 - The blended formula `p_eff = base·(1−s) + (s/R)·[w + (R−1)·r]` lives as constants in `app.js` (`CACHE_FORMULA_TEXT`, `CACHE_FORMULA_RULES`) and must stay mirrored in `METHODOLOGY.md`; regenerate `methodology.html` via `node scripts/build_methodology.js` after any change.
 - Workload cost is computed per offer (input, output and cache rates of one provider together), never mixed across offers.
-- Defaults: caching math on, Agentic preset s=80%, reuse R=4. Calibration evidence is documented in METHODOLOGY.md.
+- Defaults: caching math on, Agentic preset s=80%, reuse R=8. Calibration evidence is documented in METHODOLOGY.md.
 
 ## Theme & Styling Policy
 
@@ -74,7 +74,7 @@ Update these files instead of hardcoding provider-specific aliases in executable
 
 ## Performance & Rendering Policy
 
-- Table is paginated for 475-row dataset: `PAGE 80` initial `tbody.innerHTML` + sentinel `<tr id="table-sentinel">` + `IntersectionObserver` `rootMargin 800px` loading `60` more on scroll (`app.js:1141` `renderTableChunked`). `window._tableObserver`/`window._loadAllTableRows` exposed for `END`/`#data-notice` anchor flush (loads all remaining synchronously before jump) — keeps native `END` and disclaimer button working.
+- Table is paginated: `PAGE 80` initial `tbody.innerHTML` + sentinel `<tr id="table-sentinel">` + `IntersectionObserver` `rootMargin 800px` loading `60` more on scroll (`app.js:1141` `renderTableChunked`). `window._tableObserver`/`window._loadAllTableRows` exposed for `END`/`#data-notice` anchor flush (loads all remaining synchronously before jump) — keeps native `END` and disclaimer button working.
 - `scheduleRender()` and `applyFiltersAndRender()` defer when `document.hidden` (`_deferredRender`) and cancel `_renderRaf`/`_renderTimeout`/`scheduleRender._raf` + observer on `visibilitychange` (`app.js:2106`) to avoid hidden-tab queue burst that froze system 10-15s on tab return.
 - `appendChunk` yields via `performance.now()>8ms` → `setTimeout+rAF` to keep main thread responsive.
 - Slugs are single-line `white-space:nowrap` + `text-overflow:ellipsis` (`app.js:1584`, `app.js:1648`) — copy via button (`navigator.clipboard.writeText`) shows full `rawModelId`.

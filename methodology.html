@@ -11,11 +11,40 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Cost &amp; Caching Methodology.">
   <title>Cost &amp; Caching Methodology | EuroInference</title>
+  <link rel="canonical" href="https://euroinference.eu/methodology.html">
+  <meta name="author" content="nichu42">
+  <meta name="robots" content="index, follow">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0b1020" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta property="og:title" content="Cost &amp; Caching Methodology | EuroInference">
+  <meta property="og:description" content="Cost &amp; Caching Methodology — how EuroInference normalizes prices, computes workload costs, and models prompt-caching.">
+  <meta property="og:url" content="https://euroinference.eu/methodology.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="EuroInference">
+  <meta property="og:image" content="https://euroinference.eu/assets/logo_250px.webp">
+  <meta property="og:locale" content="en">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Cost &amp; Caching Methodology | EuroInference">
+  <meta name="twitter:description" content="Cost &amp; Caching Methodology — EuroInference methodology.">
+  <meta name="twitter:image" content="https://euroinference.eu/assets/logo_250px.webp">
   <link rel="icon" type="image/webp" href="assets/logo_100px.webp">
-  <link rel="stylesheet" href="styles.css?v=20260819">
+  <link rel="apple-touch-icon" href="assets/logo_250px.webp">
+  <link rel="stylesheet" href="styles.css?v=20260838">
   <script>
     const savedTheme = localStorage.getItem('euroinference-theme');
     document.documentElement.dataset.theme = savedTheme || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    "headline": "Cost &amp; Caching Methodology",
+    "about": "Cost & Caching Methodology for EuroInference",
+    "inLanguage": "en",
+    "isPartOf": { "@type": "WebSite", "name": "EuroInference", "url": "https://euroinference.eu/" },
+    "license": "https://github.com/nichu42/euroinference/blob/main/LICENSE"
+  }
   </script>
 </head>
 <body>
@@ -28,106 +57,33 @@
         <div>
           <p class="policy-kicker">Transparency</p>
           <h1>Cost &amp; Caching Methodology</h1>
-          <p class="policy-date">Last reviewed: 2026-08-24</p>
+          <p class="policy-date">Last reviewed: 2026-08-29</p>
         </div>
       </div>
     </header>
 
     <main class="policy-page glass-panel">
-<p>This page documents every calculation behind the prices shown on EuroInference: how list prices are normalized, how the workload cost column is computed, and exactly how prompt-caching assumptions enter the math. It is generated from <code>METHODOLOGY.md</code> by <code>scripts/build_methodology.js</code>; the formulas themselves live as named constants in <code>app.js</code> so UI text and implementation cannot drift apart.</p>
-<h2 id="list-price-normalization">List price normalization</h2>
-<ul>
-<li>All providers are fetched from their public model/pricing APIs (Mistral&#39;s authenticated API joined to its public pricing pages). Rates are stored in their <strong>native currency</strong>; conversion to the display currency uses the ECB reference rate shipped in <code>data.js</code> (Frankfurter/ECB, dated on the header banner).</li>
-<li>Per-token rates (Requesty, Eden AI, Mammouth, EURouter) are multiplied by 1,000,000 to get a per-1M-token figure. Cortecs and Mistral publish per-1M rates directly. Opper publishes tiered arrays; the first tier is used.</li>
-<li>Mistral regional offers (<code>@regional</code>) carry a documented 1.1x premium on every rate, including cached-input rates.</li>
-<li>Models without usable token pricing for input and output are excluded entirely.</li>
-</ul>
-<h2 id="workload-cost-cost-column">Workload cost (&quot;Cost&quot; column)</h2>
-<p>For each offer (a model at one provider):</p>
-<ul>
-<li><code>base</code> — listed input price per 1M tokens</li>
-<li><code>out</code> — listed output price per 1M tokens</li>
-<li><code>p_eff</code> — effective blended input rate after caching assumptions (see below)</li>
-</ul>
-<p>The workload total is computed <strong>per offer</strong> using that offer&#39;s own input, cache and output rates together, then the cheapest complete offer wins:</p>
-<p>```text total = (p_eff × inputTokens + out × outputTokens) / 1,000,000 ```</p>
-<p>Input and output token counts come from the workload panel (defaults: 10K in / 1K out). The &quot;Lowest Input/Output Price&quot; columns and the price-range sliders always show plain list prices; only the Cost column and the Lowest-Price Provider ranking apply caching assumptions.</p>
-<h2 id="prompt-caching-model">Prompt-caching model</h2>
-<p>Cache writes happen once per unique context; reads repeat on every subsequent request. Instead of simulating sessions, write premiums are amortized over the assumed number of times each cached context is re-read:</p>
-<p>```text p_eff = base·(1−s) + (s/R)·[w + (R−1)·r] ```</p>
-<ul>
-<li><code>s</code> — assumed share of input tokens served from cache. Presets: Chat 0%, RAG 40%, Agentic 80%.</li>
-<li><code>R</code> — average re-reads per cached context before expiry. Options: 2, 4, 8, or steady state (∞, write premium fully amortized).</li>
-<li><code>r</code> — published cache-read rate per 1M tokens.</li>
-<li><code>w</code> — published cache-write rate per 1M tokens.</li>
-</ul>
-<p>Fallback rules (deliberately conservative):</p>
-<ul>
-<li>No published write rate → <code>w = base</code> (most providers do not surcharge writes).</li>
-<li>No published read rate, or read ≥ base price → cached tokens are billed at full input price.</li>
-<li>Unknown caching support never counts as a discount — only published rates reduce the estimate.</li>
-</ul>
-<p>With <code>s = 0%</code> or the &quot;prompt caching&quot; toggle unchecked, <code>p_eff = base</code> and the column reduces to plain listed prices.</p>
-<h3 id="caching-support-states">Caching support states</h3>
-<p>Per offer, one of four states is derived and shown in the detail modal:</p>
-<ul>
-<li><strong>Priced</strong> — the provider publishes a usable cache rate.</li>
-<li><strong>Supported, no rate</strong> — the provider explicitly reports caching support (Requesty <code>supports_caching</code>, Eden AI <code>supports_prompt_caching</code>) but publishes no rate; estimates use full input price.</li>
-<li><strong>Not supported</strong> — explicitly reported as unsupported.</li>
-<li><strong>Unknown</strong> — no signal either way. Unknown never hides a model unless the &quot;Only caching-capable providers&quot; filter is enabled (which requires priced or flagged support).</li>
-</ul>
-<h2 id="provider-data-mapping">Provider data mapping</h2>
-<ul>
-<li><strong>Cortecs</strong>: <code>pricing.cache_read_cost</code>, <code>pricing.cache_write_cost</code> (EUR / 1M)</li>
-<li><strong>Requesty</strong>: <code>cached_price</code> (read), <code>caching_price</code> (write) (USD / token) plus <code>supports_caching</code></li>
-<li><strong>Eden AI</strong>: <code>pricing.cache_read_input_token_cost</code>, <code>pricing.cache_creation_input_token_cost</code>, DeepSeek-style fallback <code>input_cost_per_token_cache_hit</code> (USD / token) plus <code>capabilities.supports_prompt_caching</code></li>
-<li><strong>EURouter</strong>: <code>pricing.input_cache_read</code>, <code>pricing.input_cache_write</code> (per token, offer-level EUR or USD); zero means &quot;not offered&quot;, never free</li>
-<li><strong>Opper AI</strong>: <code>pricing.cached_input[]</code>, <code>pricing.cache_creation[]</code> (USD / 1M, first tier)</li>
-<li><strong>Mistral AI</strong>: &quot;Cached input&quot; column of the public pricing pages (USD and EUR / 1M); no write premium is published</li>
-<li><strong>Mammouth AI</strong>: no cache signals published; treated as unknown</li>
-</ul>
-<p>Invalid or non-positive cache values are dropped during data generation (<code>scripts/update_data.js</code>), so no fabricated rates can reach the site.</p>
-<h2 id="non-eu-reference-offers-openrouter">Non-EU reference offers (OpenRouter)</h2>
-<p>The detail modal shows one additional greyed-out card for <strong>OpenRouter</strong>, a US-based aggregator, when it lists a matching model. This reference is scoped strictly:</p>
-<ul>
-<li>It is shown <strong>purely for price comparison</strong> next to the European offers, labeled &quot;Non-EU Reference&quot;, and rendered as the last card in the provider grid, visually faded.</li>
-<li>It is <strong>excluded from every calculation on this site</strong>: unified model grouping, consensus capabilities, context floors, lowest-price columns, workload costs, cache math, savings figures, filters, and rankings all use European offers only.</li>
-<li>Free (<code>:free</code>) and batch (<code>:batch</code>) product variants are excluded as distinct non-comparable products; among remaining slugs for one family, a deterministic representative is kept — the most recently listed variant first (legacy generation-era slugs can share the exact family name), then the shortest ID.</li>
-<li>Cache-read rates follow the same honesty rules as EU providers: only published positive rates count, everything else is treated as unknown and estimated at full input price.</li>
-</ul>
-<h2 id="data-sovereignty-panel">Data sovereignty panel</h2>
-<p>Every detail-modal card carries a fixed five-row panel so the same questions are answered for every offer — with <strong>unknown as a first-class answer</strong> (rendered <code>? Unknown</code>, never silently dropped or filled in):</p>
-<ul>
-<li><strong>Jurisdiction</strong> — legal entity location of the provider with country and EU flags.</li>
-<li><strong>Retention</strong> — whether inputs/outputs are kept (zero-day, bounded periods such as abuse-monitoring windows, or unknown).</li>
-<li><strong>Training</strong> — whether customer data is used for model training.</li>
-<li><strong>Region</strong> — where inference processing happens (EU / US / Global).</li>
-<li><strong>Routing</strong> — first-party (&quot;Direct&quot;) vs. aggregator over backend providers; hosting partners are named when listed.</li>
-</ul>
-<p>Precedence: concrete per-listing API signals (Requesty&#39;s declared retention/training tags, region pins such as <code>@us</code>/<code>@eu</code>, host lists) override the provider-level defaults in <code>config/sovereignty.json</code>. That config holds publicly documented, source-linked facts for providers whose APIs expose no sovereignty data; omitted blocks mean unknown. Provider statements are self-published claims, not certifications — verify binding terms with the provider before deployment.</p>
-<p>When one provider serves the same model through several regions, the comparison keeps only what a European user should route through: if an EU-pinned routing exists, every non-EU listing of that provider (US pins included) is dropped from the offer, its alternate IDs and region labels alike. Otherwise a deterministic representative is kept (unpinned &gt; global &gt; explicit non-EU pin), with all routings visible under &quot;Same Model Listed As&quot; and in the Region row&#39;s tooltip.</p>
-<h2 id="default-assumptions-and-calibration">Default assumptions and calibration</h2>
-<p>Shipped defaults: <strong>Agentic preset (s = 80%)</strong>, <strong>R = 4</strong>, caching math enabled.</p>
-<p>Calibration against published real-world measurements (2026):</p>
-<ul>
-<li>Requesty network data (April 2026): cache hit rates by coding agent — Claude Code 92%, OpenCode 89%, weaker agents around 46%. The 80% default is deliberately below top-agent rates.</li>
-<li>Anthropic documents a 5-minute sliding TTL refreshed on each read, with write premiums of 1.25x base and reads at 0.1x base.</li>
-<li>A peer-reviewed evaluation of prompt caching for long-horizon agentic workloads (arXiv:2601.06007) measured 41–80% cost reductions across providers.</li>
-</ul>
-<p>Sanity check of the formula under these ratios (w = 1.25·base, r = 0.1·base):</p>
-<ul>
-<li>s = 80%, R = 4 → <code>p_eff = 0.51·base</code> → <strong>49% savings</strong> (lower half of the measured band; conservative)</li>
-<li>s = 80%, R = ∞ → <code>0.28·base</code> → 72% savings (optimistic upper bound)</li>
-<li>OpenAI-style (r = 0.25·base, no write surcharge), s = 80%, R = 4 → <code>0.55·base</code> → 45% savings</li>
-<li>Mistral-style (r = 0.1·base, no write surcharge), s = 80%, R = 4 → <code>0.46·base</code> → 54% savings</li>
-</ul>
-<h2 id="limitations">Limitations</h2>
-<ul>
-<li>All figures are net estimates excluding VAT and provider surcharges; converted figures reflect periodic ECB reference rates, not spot rates.</li>
-<li>The caching model is an estimation aid, not a billing simulation. Real-world cache hit rates depend on prompt structure, session length, idle gaps beyond provider TTLs and routing behavior.</li>
-<li>Offers without published rates are estimated at full input price, so their savings may be understated if caching exists but is unpriced publicly.</li>
-<li>Always verify binding prices, token accounting methods and caching behavior directly with the provider before deployment.</li>
-</ul>
+<p>EuroInference compares the same AI model across European providers. Prices are public listings, Quality is deggo Quality v4 (via <a href="https://models.deggo.fyi/docs" target="_blank" rel="noopener noreferrer">models.deggo.fyi</a>), and EUR Value is EuroInference&#39;s heuristic (Quality × affordabilityEU) mixing that Quality with EU pricing.</p>
+<h2 id="what-you-see">What you see</h2>
+<p>* <strong>Input / Output</strong> — cheapest list price per 1M tokens. * <strong>Workload Cost</strong> — what you&#39;d actually pay for your token counts, with your caching settings. Cheapest offer wins. * <strong>Quality</strong> — deggo Quality v4 (0–100) via <a href="https://models.deggo.fyi" target="_blank" rel="noopener noreferrer">models.deggo.fyi</a>. * <strong>EUR Value</strong> — quality per euro at list price: <code>Quality × affordability</code>, where <code>blended = (input + output)/2</code> *from the single cheapest EU offer* (the offer with minimal <code>(in+out)/2</code>; input and output are taken together, not mixed across providers) and <code>affordability = 1/(1+log10(1+blended·8)·0.45)</code> — <code>8</code> and <code>0.45</code> are heuristic scaling (log-dampened per Weber-Fechner) chosen to spread Value across our price range, not fitted to demand data. Higher = more quality for the money. Not affected by the workload sliders.</p>
+<p>Switching EUR/USD only converts the displayed numbers — rankings stay on EUR prices.</p>
+<h2 id="workload-cost-in-one-line">Workload Cost in one line</h2>
+<pre><code>p_eff = base·(1−s) + (s/R)·[w + (R−1)·r]
+total = (p_eff·input + out·output) / 1,000,000</code></pre>
+<p>* <code>base</code> / <code>out</code> — list prices. * <code>s</code> — share of input from cache (Chat 0%, RAG 40%, Agentic 80%). * <code>R</code> — how often a cached prompt is reused (2, 4, 8, or ∞). * <code>r</code> / <code>w</code> — provider&#39;s cache read / write price. If a rate isn&#39;t published, we use <code>base</code> (no discount) — unknown never means free.</p>
+<p>Turn off *prompt caching* and <code>p_eff = base</code>.</p>
+<h2 id="caching-in-practice">Caching in practice</h2>
+<p>Defaults are <strong>Agentic 80% / R=8, on</strong>. That&#39;s intentionally below top agents (Claude Code 92% hits) and matches published measurements of 41–80% savings for agentic workloads.</p>
+<p>Per offer we show: <strong>Priced</strong> (rate published), <strong>Supported, no rate</strong>, <strong>Not supported</strong>, <strong>Unknown</strong>. Only *Priced* gives a discount.</p>
+<h2 id="where-the-numbers-come-from">Where the numbers come from</h2>
+<p>Prices are the providers&#39; public listings (Cortecs, EURouter, Mammouth, Mistral, etc.). Mistral <code>@regional</code> is 1.1×. Invalid rates are dropped.</p>
+<p>Quality is deggo&#39;s published Quality v4. We don&#39;t store the raw benchmark tables.</p>
+<p>EUR Value is our heuristic calculation: we take the cheapest EU offer *as a whole* — the offer with minimal <code>(in+out)/2</code> in EUR, input and output taken together from that same offer — and apply the affordability curve above (heuristic, not an econometric model).</p>
+<p>The <strong>OpenRouter</strong> card in the detail view is a non-EU reference for comparison only — never used for rankings or costs.</p>
+<h2 id="sovereignty-badges">Sovereignty badges</h2>
+<p>Each offer shows <code>✓ EU</code>, <code>EU (US)</code>, <code>EU-Sovereign</code> or <code>Global</code> for jurisdiction, plus retention, training, and where the model runs. <code>? Unknown</code> means the provider doesn&#39;t say — we don&#39;t guess. Details come from the provider&#39;s own API signals or <code>config/sovereignty.json</code> (public, source-linked facts).</p>
+<h2 id="limits">Limits</h2>
+<p>Prices exclude VAT and are converted with the periodic ECB reference rate shown in the header (timestamp, typically twice daily — may lag live catalogs). Caching estimates depend on your prompts, assumptions (share/reuses), and the provider&#39;s TTL — only published positive rates reduce the estimate, unknown never means free, and formulas are documented above. Quality (deggo Quality v4) is a synthesized third-party benchmark and EUR Value is EuroInference&#39;s heuristic (Quality × affordabilityEU, <code>affordability=1/(1+log10(1+blended·8)·0.45)</code> over the cheapest EU blended <code>(input+output)/2</code>); neither is an official rating. Sovereignty badges summarize self-published provider policies and API signals (sources in <code>config/sovereignty.json</code>); omitted = unknown, not a certification — verify the provider&#39;s DPA and binding terms. The OpenRouter card is a non-EU reference for price comparison only, excluded from all rankings and calculations. Generic model facts are enriched when matched from <a href="https://models.dev" target="_blank" rel="noopener noreferrer">models.dev</a> (MIT). Always check the provider&#39;s own pricing page, limits, privacy, and terms before buying. Data is provided on an &#39;as is&#39; basis without warranties beyond mandatory statutory limits.</p>
     </main>
 
     <footer class="policy-footer">

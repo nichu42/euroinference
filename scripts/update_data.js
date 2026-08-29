@@ -32,6 +32,145 @@ function _stripDocKeys(obj) {
 }
 const _creatorMap = _stripDocKeys(creatorsMap) || {};
 
+// Helpers for EUR Value pipeline calc (quality × affordabilityEU, no browser calc)
+// Treat 0 / non-positive as “no pricing” (like app.js positiveRate) — avoids free-tier 0 skewing cheapest blended to 0
+function getOfferInputCostEUR(providerId, offer, rate) {
+  if (!offer) return null;
+  if (providerId === 'cortecs') {
+    const v = offer.pricing?.input_token;
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+  if (providerId === 'mammouth') {
+    const v = offer.model_info?.input_cost_per_token;
+    return Number.isFinite(v) && v > 0 ? (v * 1000000) / rate : null;
+  }
+  if (providerId === 'mistral' || providerId === 'mistral-regional') {
+    if (!offer.pricing) return null;
+    if (Number.isFinite(offer.pricing.input_token_eur) && offer.pricing.input_token_eur > 0) return offer.pricing.input_token_eur;
+    const usd = offer.pricing.input_token;
+    return Number.isFinite(usd) && usd > 0 ? usd / rate : null;
+  }
+  if (providerId === 'edenai') {
+    const v = offer.pricing?.input_cost_per_token;
+    return Number.isFinite(v) && v > 0 ? (v * 1000000) / rate : null;
+  }
+  if (providerId === 'opper') {
+    const v = Array.isArray(offer.pricing?.input) ? offer.pricing.input[0] : null;
+    return Number.isFinite(v) && v > 0 ? v / rate : null;
+  }
+  if (providerId === 'eurouter') {
+    if (!offer.pricing || offer.pricing.prompt === undefined) return null;
+    const cur = offer.pricing.currency || 'EUR';
+    const val = parseFloat(offer.pricing.prompt) * 1000000;
+    if (!Number.isFinite(val) || val <= 0) return null;
+    return cur === 'EUR' ? val : val / rate;
+  }
+  if (providerId === 'greenpt') {
+    const v = offer.pricing?.promptToken;
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+  if (providerId === 'requesty') {
+    const v = offer.input_price;
+    return Number.isFinite(v) && v > 0 ? (v * 1000000) / rate : null;
+  }
+  if (providerId === 'openrouter') {
+    const v = offer.pricing?.prompt;
+    return Number.isFinite(v) && v > 0 ? (v * 1000000) / rate : null;
+  }
+  return null;
+}
+function getOfferOutputCostEUR(providerId, offer, rate) {
+  if (!offer) return null;
+  if (providerId === 'cortecs') {
+    const v = offer.pricing?.output_token;
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+  if (providerId === 'mammouth') {
+    const v = offer.model_info?.output_cost_per_token;
+    return Number.isFinite(v) && v > 0 ? (v * 1000000) / rate : null;
+  }
+  if (providerId === 'mistral' || providerId === 'mistral-regional') {
+    if (!offer.pricing) return null;
+    if (Number.isFinite(offer.pricing.output_token_eur) && offer.pricing.output_token_eur > 0) return offer.pricing.output_token_eur;
+    const usd = offer.pricing.output_token;
+    return Number.isFinite(usd) && usd > 0 ? usd / rate : null;
+  }
+  if (providerId === 'edenai') {
+    const v = offer.pricing?.output_cost_per_token;
+    return Number.isFinite(v) && v > 0 ? (v * 1000000) / rate : null;
+  }
+  if (providerId === 'opper') {
+    const v = Array.isArray(offer.pricing?.output) ? offer.pricing.output[0] : null;
+    return Number.isFinite(v) && v > 0 ? v / rate : null;
+  }
+  if (providerId === 'eurouter') {
+    if (!offer.pricing || offer.pricing.completion === undefined) return null;
+    const cur = offer.pricing.currency || 'EUR';
+    const val = parseFloat(offer.pricing.completion) * 1000000;
+    if (!Number.isFinite(val) || val <= 0) return null;
+    return cur === 'EUR' ? val : val / rate;
+  }
+  if (providerId === 'greenpt') {
+    const v = offer.pricing?.completionToken;
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+  if (providerId === 'requesty') {
+    const v = offer.output_price;
+    return Number.isFinite(v) && v > 0 ? (v * 1000000) / rate : null;
+  }
+  if (providerId === 'openrouter') {
+    const v = offer.pricing?.completion;
+    return Number.isFinite(v) && v > 0 ? (v * 1000000) / rate : null;
+  }
+  return null;
+}
+function getOfferCacheRatesEUR(providerId, offer, rate) {
+  let read = null, write = null;
+  if (providerId === 'cortecs') {
+    if (Number.isFinite(offer.pricing?.cache_read_cost)) read = offer.pricing.cache_read_cost;
+    if (Number.isFinite(offer.pricing?.cache_write_cost)) write = offer.pricing.cache_write_cost;
+  } else if (providerId === 'mistral' || providerId === 'mistral-regional') {
+    if (Number.isFinite(offer.pricing?.cached_input_token_eur)) read = offer.pricing.cached_input_token_eur;
+  } else if (providerId === 'edenai') {
+    if (Number.isFinite(offer.pricing?.cache_read_input_token_cost)) read = offer.pricing.cache_read_input_token_cost * 1000000 / rate;
+    else if (Number.isFinite(offer.pricing?.input_cost_per_token_cache_hit)) read = offer.pricing.input_cost_per_token_cache_hit * 1000000 / rate;
+    if (Number.isFinite(offer.pricing?.cache_creation_input_token_cost)) write = offer.pricing.cache_creation_input_token_cost * 1000000 / rate;
+  } else if (providerId === 'opper') {
+    if (Array.isArray(offer.pricing?.cached_input) && Number.isFinite(offer.pricing.cached_input[0])) read = offer.pricing.cached_input[0] / rate;
+    if (Array.isArray(offer.pricing?.cache_creation) && Number.isFinite(offer.pricing.cache_creation[0])) write = offer.pricing.cache_creation[0] / rate;
+  } else if (providerId === 'eurouter') {
+    const rr = parseFloat(offer.pricing?.input_cache_read);
+    const rw = parseFloat(offer.pricing?.input_cache_write);
+    const cur = offer.pricing?.currency || 'EUR';
+    if (Number.isFinite(rr) && rr > 0) {
+      const v = rr * 1000000;
+      read = cur === 'EUR' ? v : v / rate;
+    }
+    if (Number.isFinite(rw) && rw > 0) {
+      const v = rw * 1000000;
+      write = cur === 'EUR' ? v : v / rate;
+    }
+  } else if (providerId === 'greenpt') {
+    if (Number.isFinite(offer.pricing?.cachedPromptToken)) read = offer.pricing.cachedPromptToken;
+  } else if (providerId === 'requesty') {
+    if (Number.isFinite(offer.cached_price)) read = offer.cached_price * 1000000 / rate;
+    if (Number.isFinite(offer.caching_price)) write = offer.caching_price * 1000000 / rate;
+  } else if (providerId === 'openrouter') {
+    if (Number.isFinite(offer.pricing?.input_cache_read)) read = offer.pricing.input_cache_read * 1000000 / rate;
+  }
+  return { read, write };
+}
+function getOfferEffectiveInputCostEUR(providerId, offer, rate) {
+  const base = getOfferInputCostEUR(providerId, offer, rate);
+  if (base === null) return null;
+  const share = 0.8, reuse = 8; // realistic agentic: 80% cached, R=8 reuses per research
+  const { read, write } = getOfferCacheRatesEUR(providerId, offer, rate);
+  const readRate = (Number.isFinite(read) && read < base) ? read : base;
+  const writeRate = Number.isFinite(write) ? write : base;
+  const amort = (writeRate + (reuse - 1) * readRate) / reuse;
+  return base * (1 - share) + share * amort;
+}
+
 const RETRY_LIMIT = 3;
 const RETRY_DELAY_MS = 1000;
 
@@ -309,6 +448,27 @@ async function run() {
     modelsDevCatalog = null;
   }
 
+  // 12. Fetch readable benchmarks catalog (models.deggo.fyi) for Quality enrichment (EUR Value is EuroInference's heuristic, not deggo)
+  // Build-time single call: API is rate-limited (30/60s per IP, 120 global). No per-user fetch.
+  // Author allowed use; doc: HTML is graph view, do not scrape /, prefer /api/recommend for ranking.
+  // We fetch /api/models full catalog once for coverage across all families.
+  let deggoCatalog = null;
+  let deggoMeta = null;
+  try {
+    const res = await fetchWithRetry('https://models.deggo.fyi/api/models', {}, 'deggo');
+    const json = await res.json();
+    deggoMeta = { updatedAt: json.updatedAt || new Date().toISOString(), source: 'https://models.deggo.fyi/docs' };
+    const rawModels = Array.isArray(json.models) ? json.models : (Array.isArray(json) ? json : []);
+    deggoCatalog = buildDeggoCatalog(rawModels);
+    updateStatus.deggo = Array.isArray(deggoCatalog);
+    console.log(`Fetched deggo catalog: ${deggoCatalog.length} models (Quality — Value is EU-blended).`);
+  } catch (err) {
+    updateStatus.deggo = false;
+    console.warn('Failed to fetch deggo catalog (non-fatal, table shows ? Unknown):', err.message);
+    deggoCatalog = null;
+    deggoMeta = null;
+  }
+
   // Resolve data path
   const dataFilePath = path.join(__dirname, '../data.js');
   // Trim each provider's data down to only the fields app.js actually reads.
@@ -337,7 +497,8 @@ async function run() {
   // Unify everything at generation time: grouping, alias resolution, EU-region
   // pruning, capability consensus and sovereignty resolution all happen here so
   // the browser only renders. unify.js is the single shared implementation.
-  const { models: unified, sovereigntyMeta } = EuroUnify.buildUnifiedModels({
+  const deggoByCleanForLog = deggoCatalog ? new Map(deggoCatalog.map(e => [e.clean, e])) : null;
+  const { models: unified, sovereigntyMeta, deggoMeta: deggoMetaUnified } = EuroUnify.buildUnifiedModels({
     providers: {
       mammouth: mammouthData || [],
       cortecs: cortecsData || [],
@@ -350,8 +511,88 @@ async function run() {
       openrouter: openrouterData || []
     },
     sovereignty: sovereigntyMap,
-    modelsDev: modelsDevCatalog
+    modelsDev: modelsDevCatalog,
+    deggo: deggoCatalog
   });
+  // prefer updater's deggoMeta (has updatedAt from live feed) else unified fallback
+  if (!deggoMeta && deggoMetaUnified) deggoMeta = deggoMetaUnified;
+  if (deggoMetaUnified && deggoMeta && deggoMeta.updatedAt) deggoMetaUnified.updatedAt = deggoMeta.updatedAt;
+
+  // EUR Value pipeline calc — Quality × affordabilityEU over cheapest EU offer's (in+out)/2 (same offer, no browser calc)
+  {
+    const euRate = (() => {
+      if (!exchangeRateData) return 1.1652;
+      if (Array.isArray(exchangeRateData) && exchangeRateData[0]?.rate) return exchangeRateData[0].rate;
+      if (exchangeRateData.rate) return exchangeRateData.rate;
+      if (exchangeRateData.rates?.USD) return exchangeRateData.rates.USD;
+      return 1.1652;
+    })();
+    for (const m of unified) {
+      if (!m.deggo || !Number.isFinite(m.deggo.qualityValue)) continue;
+      let bestBlendedEUR = null;
+      for (const [pid, offer] of Object.entries(m.offers)) {
+        const inEUR = getOfferInputCostEUR(pid, offer, euRate);
+        const outEUR = getOfferOutputCostEUR(pid, offer, euRate);
+        if (!Number.isFinite(inEUR) || !Number.isFinite(outEUR)) continue;
+        const blended = (inEUR + outEUR) / 2;
+        if (bestBlendedEUR === null || blended < bestBlendedEUR) bestBlendedEUR = blended;
+      }
+      if (bestBlendedEUR === null || bestBlendedEUR <= 0) continue;
+      const blendedUSD = bestBlendedEUR * euRate;
+      const affEUR = 1 / (1 + Math.log10(1 + bestBlendedEUR * 8) * 0.45);
+      const euValue = m.deggo.qualityValue * affEUR;
+      m.deggo.euValueEUR = euValue;
+      m.deggo.euValueUSD = euValue;
+      m.deggo.blendedEUR = bestBlendedEUR;
+      m.deggo.blendedUSD = blendedUSD;
+    }
+  }
+
+  // Bake lowest browser work — cheapest input/output/effective/workload + provider order for default view (50k in @80% cached/R=8 / 5k out)
+  {
+    const euRate = (() => {
+      if (!exchangeRateData) return 1.1652;
+      if (Array.isArray(exchangeRateData) && exchangeRateData[0]?.rate) return exchangeRateData[0].rate;
+      if (exchangeRateData.rate) return exchangeRateData.rate;
+      if (exchangeRateData.rates?.USD) return exchangeRateData.rates.USD;
+      return 1.1652;
+    })();
+    const inTokens = 50000, outTokens = 5000;
+    for (const m of unified) {
+      let bestInEUR = null, bestOutEUR = null, bestEffInEUR = null, bestWorkloadEUR = null, bestWorkloadUSD = null;
+      const workloads = [];
+      for (const [pid, offer] of Object.entries(m.offers)) {
+        const inEUR = getOfferInputCostEUR(pid, offer, euRate);
+        const outEUR = getOfferOutputCostEUR(pid, offer, euRate);
+        const effInEUR = getOfferEffectiveInputCostEUR(pid, offer, euRate);
+        if (Number.isFinite(inEUR) && (bestInEUR === null || inEUR < bestInEUR)) bestInEUR = inEUR;
+        if (Number.isFinite(outEUR) && (bestOutEUR === null || outEUR < bestOutEUR)) bestOutEUR = outEUR;
+        if (Number.isFinite(effInEUR) && (bestEffInEUR === null || effInEUR < bestEffInEUR)) bestEffInEUR = effInEUR;
+        if (Number.isFinite(effInEUR) && Number.isFinite(outEUR)) {
+          const wlEUR = (effInEUR * inTokens + outEUR * outTokens) / 1000000;
+          const wlUSD = wlEUR * euRate;
+          workloads.push({ pid, wlEUR, wlUSD });
+          if (bestWorkloadEUR === null || wlEUR < bestWorkloadEUR) {
+            bestWorkloadEUR = wlEUR;
+            bestWorkloadUSD = wlUSD;
+          }
+        }
+      }
+      workloads.sort((a, b) => a.wlEUR - b.wlEUR);
+      m.baked = {
+        lowestInputEUR: bestInEUR,
+        lowestInputUSD: bestInEUR!==null ? bestInEUR*euRate : null,
+        lowestOutputEUR: bestOutEUR,
+        lowestOutputUSD: bestOutEUR!==null ? bestOutEUR*euRate : null,
+        lowestEffInEUR: bestEffInEUR,
+        lowestEffInUSD: bestEffInEUR!==null ? bestEffInEUR*euRate : null,
+        workloadEUR: bestWorkloadEUR,
+        workloadUSD: bestWorkloadUSD,
+        providerOrder: workloads.map(x=>x.pid),
+        providerWorkloads: workloads.map(x => ({ pid: x.pid, wlEUR: x.wlEUR, wlUSD: x.wlUSD }))
+      };
+    }
+  }
 
   // Sanity check: every unified model must expose at least one priced offer.
   const emptyModels = unified.filter(m => Object.keys(m.offers).length === 0);
@@ -450,6 +691,10 @@ const UNIFIED_MODELS = ${outUnified};
 // source links) shared by all offers of a provider. Per-offer state lives on
 // the unified models; the browser merges both.
 const SOVEREIGNTY_META = ${JSON.stringify(sovereigntyMeta)};
+
+// Readable benchmarks catalog meta (models.deggo.fyi) — Quality v4 (deggo); EUR Value is EuroInference's heuristic
+// Blended price (in+out)/2 EUR/1M
+const DEGGO_META = ${JSON.stringify(deggoMeta)};
 `;
 
   fs.writeFileSync(dataFilePath, content, 'utf8');
@@ -659,6 +904,28 @@ function buildGreenPTCatalog(rawModels) {
       }
     };
     return [out];
+  });
+}
+
+// Build deggo catalog: use deggo's published Quality Score verbatim.
+// deggo's /api/models ships qualityValue (Quality v4, 0-100) directly, so we take it as-is.
+// We deliberately do NOT synthesize from raw sub-scores (intelligence/coding/agentic/correct/
+// incorrect) — that would redistribute deggo's proprietary blend without approval (see AGENTS.md).
+// Value is computed locally per EU cheapest offer (quality × EU affordability). If a model lacks
+// qualityValue, it stays unrated.
+function buildDeggoCatalog(rawModels) {
+  return rawModels.flatMap(m => {
+    if (!m || typeof m !== 'object' || !m.slug) return [];
+    const slug = String(m.slug).trim();
+    if (!slug) return [];
+    const clean = slug.toLowerCase();
+    const q = Number.isFinite(m.qualityValue) ? m.qualityValue : (Number.isFinite(m.quality) ? m.quality : null);
+    const entry = {
+      slug,
+      clean,
+      qualityValue: q
+    };
+    return [entry];
   });
 }
 

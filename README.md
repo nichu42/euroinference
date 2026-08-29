@@ -25,7 +25,7 @@
 EuroInference is a static, browser-based comparison dashboard for people evaluating model access through European AI providers. It combines provider catalogs, pricing, context limits, capabilities, and availability into one searchable view without sending dashboard input to an application backend.
 
 > [!WARNING]
-> **Prices and model information are informational estimates, not quotations.** Values are collected from public third-party catalogs and pricing pages, normalized across providers, and converted using periodic EUR/USD reference rates. They may exclude VAT, credits, minimum commitments, regional terms, billing surcharges, or other provider-specific conditions. Always verify current prices, limits, privacy terms, service quality, and contractual conditions with the provider before making a deployment or purchasing decision. EuroInference is not affiliated with or endorsed by any listed provider.
+> **Prices and model information are informational estimates, not quotations.** Data is normalized from public catalogs and converted via periodic ECB rates; displayed IDs/prices/limits may not match the provider's live catalog verbatim — mismatches can occur due to aliasing, differing field definitions, conversion, or timing — and may exclude VAT/surcharges or lag live catalogs. Heuristics (caching, Quality/Value, sovereignty) are estimates, not certifications. Always verify with the provider before deployment. See [Methodology](METHODOLOGY.md) and the footer disclaimer for full details. Not affiliated with any provider.
 
 ## Contents
 
@@ -41,13 +41,14 @@ EuroInference is a static, browser-based comparison dashboard for people evaluat
 
 ## Highlights
 
-- Compare model families across Mammouth AI, Cortecs, Eden AI, Opper AI, EURouter, Requesty AI, and Mistral AI.
+- Compare model families across Cortecs, Eden AI, EURouter, GreenPT, Mammouth AI, Mistral AI, Opper AI, and Requesty AI.
 - Group provider-specific IDs into normalized model families and creator names.
 - Switch between EUR and USD views using the generated Frankfurter/ECB reference rate.
-- Search and filter by model, creator, provider, minimum context window, input price, and output price.
+- Sort by **Quality Score** (from [models.deggo.fyi](https://models.deggo.fyi/docs) Quality v4) and **EUR Value Score** (Quality × EU affordability over cheapest EU blended *list price*: `(input + output)/2` from the single cheapest EU offer, same offer — not workload- or cache-adjusted, higher is better; `affordability = 1/(1+log10(1+blended·8)·0.45)`).
+- Search and filter by model, creator, provider, minimum context window, release date, deduplication (latest 2 per family), input/output price, and caching-capable providers.
 - Estimate the cost of a representative workload with configurable input and output token counts.
 - Model prompt-caching economics in the workload estimate with configurable cached-input share and reuse assumptions; filter for caching-capable providers ([methodology](METHODOLOGY.md)).
-- Inspect provider offers, context limits, capabilities, modalities, regions, and additional model metadata (weights, release date via models.dev when matched).
+- Inspect provider offers, context limits, capabilities, modalities, regions, and additional model metadata (weights, release date via models.dev when matched) plus Quality (deggo) and EUR Value (EuroInference heuristic) overview in the detail modal.
 - Answer the same data-sovereignty questions on every offer — jurisdiction, retention, training, hosting vs inference, routing — `✓ EU`/`EU (US)`/`EU-Sovereign`/`Global` short badges with `CLOUD Act` nuance, unknown kept visible ([methodology](METHODOLOGY.md)).
 - Show one greyed-out non-EU reference offer (OpenRouter) in the detail modal when available, purely for price comparison; it is excluded from all rankings, filters, and estimates.
 - Keep the page fast and predictable by shipping a generated `data.js` cache instead of querying provider APIs at page load.
@@ -56,7 +57,7 @@ EuroInference is a static, browser-based comparison dashboard for people evaluat
 
 ## Live dashboard
 
-Open the hosted version at **[euroinference.sites.deploybase.eu](https://euroinference.sites.deploybase.eu)**.
+Open the hosted version at **[euroinference.eu](https://euroinference.eu)**.
 
 The dashboard is a static site. Search terms, filters, currency selection, workload assumptions, sorting, and the light/dark theme are handled in your browser. The selected theme is the only preference persisted by the page, under the `euroinference-theme` local storage key.
 
@@ -72,12 +73,14 @@ The updater currently collects:
 | Source | Purpose |
 | --- | --- |
 | [models.dev](https://models.dev) | Provider-agnostic model facts (unified name, lab, modalities, reasoning, tool call, weights, description) — `MIT`, baked into `UNIFIED_MODELS[].modelsDev` |
+| [models.deggo.fyi](https://models.deggo.fyi/docs) | Readable benchmarks — Quality Score v4 (synthesized) — used with permission, baked into `UNIFIED_MODELS[].deggo` + `DEGGO_META`; **EUR Value** is `Quality × affordabilityEU` over the cheapest EU offer `(in+out)/2` (only synthesized Quality, not raw third-party indexes) |
 | Frankfurter | EUR/USD reference exchange rate |
 | Mammouth AI | Public model catalog and token pricing |
 | Cortecs | OpenAI-compatible model catalog and pricing |
 | Eden AI | Model catalog, capabilities, regions, and pricing |
 | Opper AI | Model catalog, capabilities, regions, and pricing |
 | EURouter | Model catalog, tags, provider offers, and pricing |
+| GreenPT | Model catalog and EUR pricing via public `/v1/pricing` |
 | Requesty AI | Model catalog, capabilities, retention, and pricing |
 | Mistral AI | Authenticated model catalog plus public USD/EUR pricing pages |
 | OpenRouter | Non-EU reference offers for the detail modal comparison only (excluded from rankings) |

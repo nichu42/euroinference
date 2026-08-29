@@ -11,11 +11,40 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Project Credits and Attributions.">
   <title>Project Credits and Attributions | EuroInference</title>
+  <link rel="canonical" href="https://euroinference.eu/credits.html">
+  <meta name="author" content="nichu42">
+  <meta name="robots" content="index, follow">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0b1020" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta property="og:title" content="Project Credits and Attributions | EuroInference">
+  <meta property="og:description" content="Project Credits and Attributions — data sources, fonts, and artwork attributions for EuroInference.">
+  <meta property="og:url" content="https://euroinference.eu/credits.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="EuroInference">
+  <meta property="og:image" content="https://euroinference.eu/assets/logo_250px.webp">
+  <meta property="og:locale" content="en">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Project Credits and Attributions | EuroInference">
+  <meta name="twitter:description" content="Project Credits and Attributions — EuroInference attributions.">
+  <meta name="twitter:image" content="https://euroinference.eu/assets/logo_250px.webp">
   <link rel="icon" type="image/webp" href="assets/logo_100px.webp">
-  <link rel="stylesheet" href="styles.css?v=20260819">
+  <link rel="apple-touch-icon" href="assets/logo_250px.webp">
+  <link rel="stylesheet" href="styles.css?v=20260838">
   <script>
     const savedTheme = localStorage.getItem('euroinference-theme');
     document.documentElement.dataset.theme = savedTheme || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    "headline": "Project Credits and Attributions",
+    "about": "Credits and attributions for EuroInference",
+    "inLanguage": "en",
+    "isPartOf": { "@type": "WebSite", "name": "EuroInference", "url": "https://euroinference.eu/" },
+    "license": "https://github.com/nichu42/euroinference/blob/main/LICENSE"
+  }
   </script>
 </head>
 <body>
@@ -38,6 +67,7 @@
 <p>We build on the following services — their data/code is reused in the build or runtime:</p>
 <ul>
 <li><strong><a href="https://models.dev" target="_blank" rel="noopener noreferrer">models.dev</a></strong> — Model facts (unified name, lab, modalities, reasoning, tool call, weights, description) — <a href="https://github.com/anomalyco/models.dev/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License, Copyright (c) 2025 models.dev</a> — Permission is hereby granted, free of charge, to any person obtaining a copy — to use, copy, modify, merge, publish, distribute … subject to including the copyright and permission notice — fetched live from <code>https://models.dev/models.json</code> and baked into <code>data.js</code></li>
+<li><strong><a href="https://models.deggo.fyi/docs" target="_blank" rel="noopener noreferrer">models.deggo.fyi</a></strong> — Readable benchmarks — Quality Score v4 (synthesized) used with author permission for the Quality column and detail-modal overview. Fetched live from <code>https://models.deggo.fyi/api/models</code> and baked into <code>data.js</code> as <code>UNIFIED_MODELS[].deggo</code> + <code>DEGGO_META</code>. Raw third-party benchmark indexes (Artificial Analysis, CursorBench, DeepSWE, etc.) are not redistributed; only deggo&#39;s synthesized Quality is stored. <strong>Value</strong> is EuroInference&#39;s own <strong>EUR Value = Quality × affordabilityEU</strong> (<code>affordability = 1/(1+log10(1+blendedEU*8)*0.45)</code> where <code>blendedEU</code> is the cheapest EU offer <code>(in+out)/2</code>), so no model shows Quality without Value. See <code>https://models.deggo.fyi/docs</code> for Quality methodology.</li>
 <li><strong><a href="https://www.frankfurter.app/" target="_blank" rel="noopener noreferrer">Frankfurter</a></strong> — EUR/USD reference rate (ECB rates) — <a href="https://github.com/lineofflight/frankfurter/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a> — Permission is hereby granted, free of charge, to any person obtaining a copy — to use, copy, modify, merge, publish, distribute … subject to including the copyright and permission notice</li>
 </ul>
 <h2 id="fonts">Fonts</h2>
@@ -50,10 +80,6 @@
 <p>The font files are included locally so the dashboard can render consistently without requesting font files from a third-party font CDN.</p>
 <h2 id="project-artwork">Project artwork</h2>
 <p>The EuroInference name, logo, favicon, and visual styling in <code>assets/</code>, <code>favicon.*</code>, and <code>styles.css</code> are project artwork by the maintainer and contributors unless a file states otherwise. Please do not reuse the branding in a way that suggests official affiliation.</p>
-<h2 id="commercial-providers-queried-for-pricing">Commercial providers queried for pricing</h2>
-<p>The following commercial providers are *queried* for public catalog/pricing only — we aggregate and normalize their public listings for comparison. They are not dependencies we reuse, and their appearance does not imply sponsorship, endorsement, or affiliation. Each retains its own terms, trademarks, privacy policies, and data-retention practices. All are queried for <strong>catalog &amp; pricing</strong> (Mistral via pricing pages):</p>
-<p><a href="https://cortecs.ai/" target="_blank" rel="noopener noreferrer">Cortecs</a> · <a href="https://www.edenai.co/" target="_blank" rel="noopener noreferrer">Eden AI</a> · <a href="https://eurouter.ai/" target="_blank" rel="noopener noreferrer">EURouter</a> · <a href="https://greenpt.com/" target="_blank" rel="noopener noreferrer">GreenPT</a> · <a href="https://mammouth.ai/" target="_blank" rel="noopener noreferrer">Mammouth AI</a> · <a href="https://mistral.ai/" target="_blank" rel="noopener noreferrer">Mistral AI</a> · <a href="https://opper.ai/" target="_blank" rel="noopener noreferrer">Opper AI</a> · <a href="https://www.requesty.ai/" target="_blank" rel="noopener noreferrer">Requesty AI</a></p>
-<p>EuroInference normalizes these source records for comparison. The normalized output is not an official copy of any provider catalog and should not be treated as a provider commitment.</p>
     </main>
 
     <footer class="policy-footer">

@@ -45,6 +45,8 @@ function renderMarkdown(markdown) {
   const output = [];
   let paragraph = [];
   let inList = false;
+  let inCodeBlock = false;
+  let codeBlockLines = [];
 
   function closeList() {
     if (inList) {
@@ -65,6 +67,24 @@ function renderMarkdown(markdown) {
   }
 
   for (const line of bodyLines) {
+    if (line.trim().startsWith('```')) {
+      if (!inCodeBlock) {
+        closeParagraph();
+        closeList();
+        inCodeBlock = true;
+        codeBlockLines = [];
+      } else {
+        inCodeBlock = false;
+        const code = escapeHtml(codeBlockLines.join('\n'));
+        output.push(`<pre><code>${code}</code></pre>`);
+        codeBlockLines = [];
+      }
+      continue;
+    }
+    if (inCodeBlock) {
+      codeBlockLines.push(line);
+      continue;
+    }
     if (!line.trim()) {
       closeParagraph();
       closeList();
@@ -101,6 +121,10 @@ function renderMarkdown(markdown) {
 
   closeParagraph();
   closeList();
+  if (inCodeBlock && codeBlockLines.length) {
+    const code = escapeHtml(codeBlockLines.join('\n'));
+    output.push(`<pre><code>${code}</code></pre>`);
+  }
 
   return { title, effectiveDate: reviewedDate, body: output.join('\n') };
 }
@@ -121,11 +145,40 @@ function buildPage({ title, effectiveDate, body }) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="${escapedTitle}.">
   <title>${escapedTitle} | EuroInference</title>
+  <link rel="canonical" href="https://euroinference.eu/methodology.html">
+  <meta name="author" content="nichu42">
+  <meta name="robots" content="index, follow">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0b1020" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta property="og:title" content="${escapedTitle} | EuroInference">
+  <meta property="og:description" content="${escapedTitle} — how EuroInference normalizes prices, computes workload costs, and models prompt-caching.">
+  <meta property="og:url" content="https://euroinference.eu/methodology.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="EuroInference">
+  <meta property="og:image" content="https://euroinference.eu/assets/logo_250px.webp">
+  <meta property="og:locale" content="en">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="${escapedTitle} | EuroInference">
+  <meta name="twitter:description" content="${escapedTitle} — EuroInference methodology.">
+  <meta name="twitter:image" content="https://euroinference.eu/assets/logo_250px.webp">
   <link rel="icon" type="image/webp" href="assets/logo_100px.webp">
-  <link rel="stylesheet" href="styles.css?v=20260819">
+  <link rel="apple-touch-icon" href="assets/logo_250px.webp">
+  <link rel="stylesheet" href="styles.css?v=20260838">
   <script>
     const savedTheme = localStorage.getItem('euroinference-theme');
     document.documentElement.dataset.theme = savedTheme || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    "headline": "${escapedTitle}",
+    "about": "Cost & Caching Methodology for EuroInference",
+    "inLanguage": "en",
+    "isPartOf": { "@type": "WebSite", "name": "EuroInference", "url": "https://euroinference.eu/" },
+    "license": "https://github.com/nichu42/euroinference/blob/main/LICENSE"
+  }
   </script>
 </head>
 <body>

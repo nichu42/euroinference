@@ -16,21 +16,24 @@ let activeTab = 'all'; // 'all', 'matched', 'mammouth', 'cortecs'
 let selectedProvider = []; // array of selected provider filter values; empty = no filter
 let selectedCreator = 'all'; // 'all' or specific creator name
 let selectedTag = 'all'; // 'all' or specific capability tag
+let dedupeLatestTwo = true; // variant-aware latest 2 per family enabled by default (first-paint variant-aware)
+let dateFilter = '12m'; // preset Last 12 months (reasonable default to reduce wall; 'all' = no date filter)
+let hideUnknownDates = true; // when date filter active, hide models with no release_date (toggle-controlled)
 
 // Workload estimator inputs (used to compute the "Cost (your workload)" column).
-// Defaults: 10K input / 1K output tokens — near the OpenRouter 2025 medians with light headroom.
-// Default to a practical context size for regular chat, coding, and agent work.
+// Defaults: 50K input / 5K output tokens — realistic agentic per-task (ChatDev ~54% input, 5-step ~50k total; see research).
+// RAG 20K/1K, Chat 2K/0.5K are set via preset chips. Min context default 32k for regular coding.
 let minContextSize = 32000;
-let workloadInputTokens = 10000;
-let workloadOutputTokens = 1000;
+let workloadInputTokens = 50000;
+let workloadOutputTokens = 5000;
 
 // Prompt-caching assumptions behind the "Cost (your workload)" column.
 // cacheAwareCost toggles the blended formula on/off; cachedInputShare is the assumed
 // share of input tokens served from cache; cacheReuseRounds (R) amortizes write
 // premiums across the average number of times a cached context is re-read.
 let cacheAwareCost = true;
-let cachedInputShare = 0.8; // Agentic preset
-let cacheReuseRounds = 4;
+let cachedInputShare = 0.8; // Agentic preset (realistic: 80% cached, R=8)
+let cacheReuseRounds = 8;
 let onlyCachingProviders = false; // visibility filter: hide offers without caching support
 
 // Single source of truth for every cache-math explanation rendered in the UI.
@@ -75,9 +78,9 @@ function scheduleRender() {
   });
 }
 
-// Sorting state
-let currentSortColumn = 'id';
-let currentSortDirection = 'asc'; // 'asc' or 'desc'
+// Sorting state — default Value desc so first paint shows best quality per dollar (variant-aware dedupe keeps wall low)
+let currentSortColumn = 'value';
+let currentSortDirection = 'desc'; // 'asc' or 'desc'
 
 // --- DATA FETCHING & INITIALIZATION ---
 
@@ -743,6 +746,10 @@ function getActiveOffers(modelObj) {
 }
 
 function getInputCostPerMillion(modelObj, currency = selectedCurrency) {
+  if (modelObj.baked && isDefaultBakedView()) {
+    const v = currency === 'EUR' ? modelObj.baked.lowestInputEUR : modelObj.baked.lowestInputUSD;
+    if (Number.isFinite(v)) return v;
+  }
   const activeOffers = [];
   for (const [providerId, offer] of getActiveOffers(modelObj)) {
     const cost = getOfferInputCost(providerId, offer, currency);
@@ -752,6 +759,10 @@ function getInputCostPerMillion(modelObj, currency = selectedCurrency) {
 }
 
 function getOutputCostPerMillion(modelObj, currency = selectedCurrency) {
+  if (modelObj.baked && isDefaultBakedView()) {
+    const v = currency === 'EUR' ? modelObj.baked.lowestOutputEUR : modelObj.baked.lowestOutputUSD;
+    if (Number.isFinite(v)) return v;
+  }
   const activeOffers = [];
   for (const [providerId, offer] of getActiveOffers(modelObj)) {
     const cost = getOfferOutputCost(providerId, offer, currency);
@@ -808,6 +819,38 @@ function getBestProviderDetails(modelObj, currency = selectedCurrency) {
   return {
     providerIds: lowestOffers.map(offer => offer.providerId)
   };
+}
+
+// --- READABLE BENCHMARKS (models.deggo.fyi) HELPERS ---
+function getQualityValue(m) {
+  return m && m.deggo && Number.isFinite(m.deggo.qualityValue) ? m.deggo.qualityValue : null;
+}
+// EUR Value pipeline-baked: Quality (deggo) × affordabilityEU over cheapest EU blended (EuroInference heuristic, no browser calc)
+// Stored in data.js as deggo.euValueEUR / euValueUSD for convenience (EuroInference's calculation, not deggo's); browser just reads per selectedCurrency.
+function getValueScore(m) {
+  if (!m || !m.deggo) return null;
+  // EUR Value is EUR-anchored (cheapest EU blended in EUR). Both euValueEUR/USD are now identical (EUR-based),
+  // so currency toggle must not affect the score — prefer EUR, fall back to USD for old data.js.
+  if (Number.isFinite(m.deggo.euValueEUR)) return m.deggo.euValueEUR;
+  if (Number.isFinite(m.deggo.euValueUSD)) return m.deggo.euValueUSD;
+  if (Number.isFinite(m.deggo.priceValue)) return m.deggo.priceValue; // legacy fallback
+  return null;
+}
+function getBlendedEUR(m) {
+  if (!m || !m.deggo) return null;
+  if (Number.isFinite(m.deggo.blendedEUR)) return m.deggo.blendedEUR;
+  if (Number.isFinite(m.deggo.blendedPrice)) return m.deggo.blendedPrice;
+  return null;
+}
+function getBlendedForCurrency(m) {
+  const eur = getBlendedEUR(m);
+  if (eur === null) return null;
+  return selectedCurrency === 'USD' ? eur * exchangeRate : eur;
+}
+function formatScore(v) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '?';
+  if (v >= 10) return v.toFixed(1);
+  return v.toFixed(1);
 }
 
 // --- FILTER & SORT LOGIC ---
@@ -918,6 +961,33 @@ function getContextRange(modelObj) {
   };
 }
 
+function getDedupeFamilyKey(model) {
+  if (!model || !model.id) return String(model.id || '');
+  // Variant-aware: use clean id without version so flash/turbo/vision etc stay separate families
+  // e.g. deepseek-v4-flash-vision-exp → deepseek-v-flash-vision-exp, glm-5.3 → glm, glm-5.3-flash → glm-flash
+  // Do not use modelsDev.family (too coarse: lumps r1/v4-pro/reasoner as deepseek-thinking)
+  let clean = getCleanModelId(model.id || '');
+  clean = clean.replace(/-?\d+(?:\.\d+)?/g, '');
+  clean = clean.replace(/--+/g, '-').replace(/^-|-$/g, '');
+  return clean.toLowerCase() || String(model.id).toLowerCase();
+}
+function extractVersionForDedupe(id) {
+  const m = String(id || '').match(/(\d+(?:\.\d+)?)/);
+  return m ? parseFloat(m[1]) : 0;
+}
+function getDateCutoff() {
+  if (dateFilter === 'all') return null;
+  const now = new Date();
+  if (dateFilter === '6m') { const d = new Date(now); d.setMonth(d.getMonth() - 6); return d; }
+  if (dateFilter === '12m') { const d = new Date(now); d.setMonth(d.getMonth() - 12); return d; }
+  if (dateFilter === '18m') { const d = new Date(now); d.setMonth(d.getMonth() - 18); return d; }
+  if (dateFilter === '24m') { const d = new Date(now); d.setMonth(d.getMonth() - 24); return d; }
+  return null;
+}
+function isDefaultBakedView() {
+  return selectedProvider.length === 0 && !onlyCachingProviders && workloadInputTokens === 50000 && workloadOutputTokens === 5000 && cacheAwareCost === true && Math.abs(cachedInputShare - 0.8) < 1e-9 && cacheReuseRounds === 8;
+}
+
 let _renderId = 0;
 let _renderRaf = null;
 let _renderTimeout = null;
@@ -931,7 +1001,7 @@ function applyFiltersAndRender() {
   const qLower = searchQuery ? searchQuery.toLowerCase() : '';
   const inputRange = costFilterRanges.input;
   const outputRange = costFilterRanges.output;
-  const computed = new Map(); // model -> {inputCost, outputCost, workloadCost, friendly, friendlyLower, ctx}
+  const computed = new Map(); // model -> {inputCost, outputCost, workloadCost, friendly, friendlyLower, ctx, quality, value}
   for (const m of unifiedModels) {
     const friendly = getHumanFriendlyName(m.id || '');
     computed.set(m, {
@@ -940,9 +1010,12 @@ function applyFiltersAndRender() {
       inputCost: getInputCostPerMillion(m),
       outputCost: getOutputCostPerMillion(m),
       workloadCost: getWorkloadCost(m),
-      ctx: getContextRange(m)
+      ctx: getContextRange(m),
+      quality: getQualityValue(m),
+      value: getValueScore(m)
     });
   }
+  const dateCutoff = getDateCutoff();
   let filtered = unifiedModels.filter(m => {
     const c = computed.get(m);
     if (qLower) {
@@ -957,6 +1030,13 @@ function applyFiltersAndRender() {
       if (!showRow) return false;
     }
     if (selectedCreator !== 'all' && m.creator !== selectedCreator) return false;
+    if (dateCutoff) {
+      const _rel = m.modelsDev && m.modelsDev.release_date ? new Date(m.modelsDev.release_date) : null;
+      const hasDate = _rel && !isNaN(_rel.getTime());
+      if (!hasDate) {
+        if (hideUnknownDates) return false;
+      } else if (_rel < dateCutoff) return false;
+    }
     if (minContextSize > 0) {
       if (c.ctx.min && c.ctx.min < minContextSize) return false;
     }
@@ -966,12 +1046,40 @@ function applyFiltersAndRender() {
     return true;
   });
 
+  // Variant-aware dedupe: latest 2 distinct core versions per family (first-paint), bypass when searching
+  if (dedupeLatestTwo && !qLower) {
+    const byFamily = new Map();
+    for (const m of filtered) {
+      const key = getDedupeFamilyKey(m);
+      if (!byFamily.has(key)) byFamily.set(key, []);
+      byFamily.get(key).push(m);
+    }
+    const deduped = [];
+    for (const [, list] of byFamily) {
+      // Sort family by release_date desc, then quality desc, then version desc to pick latest 2
+      list.sort((a, b) => {
+        const aTime = a.modelsDev && a.modelsDev.release_date ? Date.parse(a.modelsDev.release_date) : 0;
+        const bTime = b.modelsDev && b.modelsDev.release_date ? Date.parse(b.modelsDev.release_date) : 0;
+        if (aTime !== bTime) return bTime - aTime;
+        const aQ = getQualityValue(a); const bQ = getQualityValue(b);
+        const av = aQ !== null ? aQ : -Infinity; const bv = bQ !== null ? bQ : -Infinity;
+        if (av !== bv) return bv - av;
+        return extractVersionForDedupe(b.id) - extractVersionForDedupe(a.id);
+      });
+      // Keep latest 2 per variant-family (release_date desc already)
+      for (let i = 0; i < Math.min(2, list.length); i++) deduped.push(list[i]);
+    }
+    filtered = deduped;
+  }
+
   filtered.sort((a, b) => {
     const ca = computed.get(a), cb = computed.get(b);
     let valA, valB;
     switch (currentSortColumn) {
       case 'id': valA = ca.friendly; valB = cb.friendly; break;
       case 'creator': valA = a.creator; valB = b.creator; break;
+      case 'quality': valA = ca.quality !== null ? ca.quality : -Infinity; valB = cb.quality !== null ? cb.quality : -Infinity; break;
+      case 'value': valA = ca.value !== null ? ca.value : -Infinity; valB = cb.value !== null ? cb.value : -Infinity; break;
       case 'context': valA = (ca.ctx || getContextRange(a)).min || 0; valB = (cb.ctx || getContextRange(b)).min || 0; break;
       case 'input': valA = ca.inputCost ?? Infinity; valB = cb.inputCost ?? Infinity; break;
       case 'output': valA = ca.outputCost ?? Infinity; valB = cb.outputCost ?? Infinity; break;
@@ -1037,12 +1145,6 @@ function updateCacheControls() {
     reuseSelect.disabled = !cacheAwareCost || cachedInputShare <= 0;
   }
 
-  // Active-filter hint on the collapsed summary line
-  const hint = document.getElementById('workload-active-hint');
-  if (hint) {
-    hint.hidden = !onlyCachingProviders;
-  }
-
   // Live explainer content
   const explainer = document.getElementById('cache-math-explainer');
   if (explainer) {
@@ -1074,38 +1176,44 @@ function buildRowHtml(m, precomputed) {
       contextStr = _intFmt.format(contextRange.min);
     }
   }
-  const availableProvidersHtml = getActiveOffers(m).map(([providerId]) => {
-    const providerName = PROVIDER_DISPLAY_NAMES[providerId] || providerId;
-    return `<span class="badge ${PROVIDER_BADGE_CLASS}" style="margin-right: 4px; font-size: 0.7rem;">${providerName}</span>`;
-  }).join('');
-  const bestDetails = getBestProviderDetails(m);
-  let bestProviderHtml = '<span style="color: var(--text-dark);">N/A</span>';
-  if (bestDetails) {
-    const allOfferCosts = getActiveOffers(m)
+  // Merge "Providers": sorted by workload cost (cache-adjusted), cheapest first + highlighted — baked fast path for default view
+  let allOfferCosts;
+  if (m.baked && isDefaultBakedView() && Array.isArray(m.baked.providerWorkloads) && m.baked.providerWorkloads.length) {
+    allOfferCosts = m.baked.providerWorkloads.map(x => ({
+      pid: x.pid,
+      name: PROVIDER_DISPLAY_NAMES[x.pid] || x.pid,
+      total: selectedCurrency === 'EUR' ? x.wlEUR : x.wlUSD
+    }));
+  } else {
+    allOfferCosts = getActiveOffers(m)
       .map(([pid, offer]) => {
         const ic = getOfferEffectiveInputCost(pid, offer);
         const oc = getOfferOutputCost(pid, offer);
         if (ic === null || oc === null) return null;
-        return { pid, name: PROVIDER_DISPLAY_NAMES[pid] || pid, total: ic + oc };
+        return { pid, name: PROVIDER_DISPLAY_NAMES[pid] || pid, total: (ic * workloadInputTokens + oc * workloadOutputTokens) / 1000000 };
       })
       .filter(Boolean)
       .sort((a, b) => a.total - b.total);
-    const bestTotal = allOfferCosts.length ? allOfferCosts[0].total : null;
+  }
+  const bestTotal = allOfferCosts.length ? allOfferCosts[0].total : null;
+  let mergedProvidersHtml = '<span style="color: var(--text-dark);">N/A</span>';
+  if (allOfferCosts.length > 0) {
     const tooltipLines = allOfferCosts.map(o => {
       if (!areCostsEqual(o.total, bestTotal)) {
-        const mult = (o.total / bestTotal).toFixed(1);
-        return `${o.name} ${mult}×`;
+        const pct = Math.round((o.total / bestTotal - 1) * 100);
+        return `${o.name} +${pct}% compared to cheapest`;
       }
-      return `${o.name} (lowest listed price)`;
+      return `${o.name} (lowest)`;
     });
-    const tooltipAttr = tooltipLines.length > 1
-      ? ` title="All providers (sorted by cost):\n${tooltipLines.join('\n')}"`
-      : '';
-    const lowestProviderBadges = bestDetails.providerIds.map(providerId => {
-      const providerName = PROVIDER_DISPLAY_NAMES[providerId] || providerId;
-      return `<span class="badge ${PROVIDER_BADGE_CLASS}" style="margin-right: 4px; font-size: 0.7rem;">${providerName}</span>`;
-    }).join('');
-    bestProviderHtml = `<span style="cursor: help;"${tooltipAttr}>${lowestProviderBadges}</span>`;
+    const containerTitle = tooltipLines.length > 1 ? ` title="Sorted by cost (cheapest first):\n${tooltipLines.join('\n')}"` : '';
+    mergedProvidersHtml = `<div style="display:flex; flex-wrap:wrap; gap:4px; cursor:help;"${containerTitle}>` + allOfferCosts.map(o => {
+      const isBest = areCostsEqual(o.total, bestTotal);
+      const pct = Math.round((o.total / bestTotal - 1) * 100);
+      const title = isBest ? 'Lowest-price provider' : `+${pct}% compared to cheapest`;
+      const extraCls = isBest ? ' badge-cheapest' : '';
+      const star = isBest ? '<span class="cheapest-star">★</span> ' : '';
+      return `<span class="badge ${PROVIDER_BADGE_CLASS}${extraCls}" style="margin-right:0; font-size:0.7rem;" title="${title}">${star}${escapeHtml(o.name)}</span>`;
+    }).join('') + `</div>`;
   }
   const workloadFmt = workloadCost === null ? 'N/A' : formatCurrency(workloadCost);
   const cacheActive = cacheAwareCost && cachedInputShare > 0;
@@ -1125,17 +1233,28 @@ function buildRowHtml(m, precomputed) {
       `(${_intFmt.format(workloadInputTokens)} in + ${_intFmt.format(workloadOutputTokens)} out) × rate ÷ 1,000,000`;
   }
   const workloadHtml = `<span title="${workloadTooltip}" style="cursor: help; border-bottom: 1px dotted;">${workloadFmt}</span>`;
+  const qScore = precomputed ? precomputed.quality : getQualityValue(m);
+  const vScore = precomputed ? precomputed.value : getValueScore(m);
+  const qTitle = qScore === null ? 'No quality score for this model yet' : `Quality Score ${qScore.toFixed(1)} — deggo Quality v4, via models.deggo.fyi`;
+  const vTitle = vScore === null ? 'No value score for this model yet (needs Quality + cheapest EU blended price)' : `EUR Value Score ${vScore.toFixed(1)} — Quality × affordabilityEU (cheapest EU offer's (in+out)/2, same offer) — affordability = 1/(1+log10(1+blended*8)*0.45)`;
+  const qualityHtml = qScore === null
+    ? `<span style="color:var(--text-dark);" title="${qTitle}">?</span>`
+    : `<span style="cursor:help;" title="${escapeHtml(qTitle)}">${_numberFmt.format(qScore)}</span>`;
+  const valueHtml = vScore === null
+    ? `<span style="color:var(--text-dark);" title="${vTitle}">?</span>`
+    : `<span style="cursor:help;" title="${escapeHtml(vTitle)}">${_numberFmt.format(vScore)}</span>`;
   const friendly = precomputed ? precomputed.friendly : getHumanFriendlyName(m.id);
   return `
       <tr class="clickable-row" onclick="openComparison('${m.id}')" title="Click to view details and provider comparison">
         <td><div class="model-name">${friendly}</div></td>
         <td><span style="font-weight: 500; font-size: 0.85rem;">${m.creator}</span></td>
-        <td><div style="display: flex; flex-wrap: wrap; gap: 4px;">${availableProvidersHtml}</div></td>
+        <td style="font-family:var(--font-mono); text-align:center;">${valueHtml}</td>
+        <td style="font-family:var(--font-mono); text-align:center;">${qualityHtml}</td>
         <td style="font-family: var(--font-mono);">${contextStr}</td>
         <td style="font-family: var(--font-mono);">${formatCurrency(inputCost)}</td>
         <td style="font-family: var(--font-mono);">${formatCurrency(outputCost)}</td>
         <td style="font-family: var(--font-mono);">${workloadHtml}</td>
-        <td>${bestProviderHtml}</td>
+        <td>${mergedProvidersHtml}</td>
       </tr>
     `;
 }
@@ -1146,7 +1265,7 @@ function renderTable(models) {
   if (models.length === 0) {
     const isInitialLoad = (typeof unifiedModels === 'undefined' || unifiedModels.length === 0);
     if (isInitialLoad) return;
-    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><p>No models match your filter criteria.</p></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><p>No models match your filter criteria.</p></div></td></tr>`;
     return;
   }
   tbody.innerHTML = models.map(m => buildRowHtml(m, null)).join('');
@@ -1161,7 +1280,7 @@ function renderTableChunked(models, computed, renderId) {
   if (models.length === 0) {
     const isInitialLoad = (typeof unifiedModels === 'undefined' || unifiedModels.length === 0);
     if (isInitialLoad) return;
-    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><p>No models match your filter criteria.</p></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><p>No models match your filter criteria.</p></div></td></tr>`;
     return;
   }
   const PAGE = 80;
@@ -1170,7 +1289,7 @@ function renderTableChunked(models, computed, renderId) {
   let html = '';
   for (let i = 0; i < firstEnd; i++) html += buildRowHtml(models[i], computed.get(models[i]));
   if (firstEnd < models.length) {
-    html += `<tr id="table-sentinel"><td colspan="8" style="text-align:center; padding:12px; color:var(--text-muted); font-size:0.8rem;">Showing ${firstEnd} of ${models.length} — scroll to load more</td></tr>`;
+    html += `<tr id="table-sentinel"><td colspan="9" style="text-align:center; padding:12px; color:var(--text-muted); font-size:0.8rem;">Showing ${firstEnd} of ${models.length} — scroll to load more</td></tr>`;
   }
   tbody.innerHTML = html;
   idx = firstEnd;
@@ -1349,15 +1468,21 @@ function buildModalOffer(providerId, rawOffer, normOffer, sovereignty) {
     }
   }
 
+  const effInCost = getOfferEffectiveInputCost(pricingProviderId, rawOffer, selectedCurrency);
+  const workloadCost = effInCost !== null && outCost !== null
+    ? (effInCost * workloadInputTokens + outCost * workloadOutputTokens) / 1000000
+    : null;
   return {
     providerId,
     providerName: normOffer.providerName,
     inCost,
     outCost,
+    effInCost,
+    workloadCost,
     cacheRates,
     cacheSupportState,
     nativeCache,
-    totalCost: inCost !== null && outCost !== null ? inCost + outCost : Infinity,
+    totalCost: workloadCost !== null ? workloadCost : (inCost !== null && outCost !== null ? inCost + outCost : Infinity),
     origIn,
     origOut,
     normOffer,
@@ -1372,7 +1497,12 @@ function openModalWithSelection(modelObj) {
 
   if (!overlay || !modalContent) return;
 
-  document.getElementById('modal-title-text').textContent = getHumanFriendlyName(modelObj.id);
+  {
+    const mdTitleName = (modelObj.modelsDev && modelObj.modelsDev.name) || getHumanFriendlyName(modelObj.id);
+    // Use the pretty creator/lab name (modelObj.creator is already via CREATOR_NAMES), not the raw models.dev lab slug.
+    const mdTitleLab = modelObj.creator || (modelObj.modelsDev && modelObj.modelsDev.lab) || '';
+    document.getElementById('modal-title-text').textContent = mdTitleLab ? `${mdTitleName} (${mdTitleLab})` : mdTitleName;
+  }
 
   const offersList = [];
   // Respect the caching visibility filter so the modal matches the table's offers.
@@ -1394,79 +1524,95 @@ function openModalWithSelection(modelObj) {
   }
 
   offersList.sort((a, b) => a.totalCost - b.totalCost);
+  const cheapestModalTotal = offersList.length && offersList[0].totalCost !== Infinity ? offersList[0].totalCost : null;
 
   // 1. Overview Section: Description + Consensus Guarantee Bar (+ models.dev enrichment)
-  const descHtml = (modelObj.modelsDev && modelObj.modelsDev.description) || modelObj.description
-    ? `<div class="modal-model-desc">${escapeHtml((modelObj.modelsDev && modelObj.modelsDev.description) || modelObj.description)}</div>`
-    : '';
+  // Description comes from models.dev when available — render it inside the models.dev container.
   const dev = modelObj.modelsDev || null;
+  const rawDesc = (dev && dev.description) || modelObj.description || '';
+  const descStandaloneHtml = rawDesc ? `<div class="modal-model-desc">${escapeHtml(rawDesc)}</div>` : '';
+  const descInsideHtml = rawDesc ? `<div class="modal-model-desc" style="grid-column:1/-1; margin-bottom:2px;">${escapeHtml(rawDesc)}</div>` : '';
   const devHtml = dev ? `
-      <div class="modal-modelsdev" style="margin-top:10px; padding:10px; background:rgba(255,255,255,0.02); border:1px solid var(--border-color); border-radius:8px; display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.75rem;">
-        <div><span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Lab</span><br><span style="color:var(--text-main); font-weight:600;">${escapeHtml(dev.lab || modelObj.creator)}</span> ${dev.family ? `<span style="color:var(--text-muted);">· ${escapeHtml(dev.family)}</span>` : ''}</div>
-        <div><span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Release</span><br><span style="color:var(--text-main);">${dev.release_date ? escapeHtml(dev.release_date) : '—'}${dev.knowledge ? ` <span title="Knowledge cutoff" style="color:var(--text-muted);"> (cutoff ${escapeHtml(dev.knowledge)})</span>` : ''}</span></div>
-        <div><span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Context / Output</span><br><span style="color:var(--text-main); font-family:var(--font-mono);">${dev.context ? dev.context.toLocaleString() : '—'} / ${dev.output ? dev.output.toLocaleString() : '—'}</span> <span style="color:var(--text-muted); font-size:0.68rem;">tokens</span></div>
-        <div><span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Weights</span><br>${dev.open_weights === true ? `<span style="color:var(--savings-color);">✓ Open</span>` : dev.open_weights === false ? `<span>✗ Closed</span>` : `<span style="color:var(--text-muted);">?</span>`} ${Array.isArray(dev.weights) && dev.weights.length ? dev.weights.map(w => `<a href="${escapeHtml(w.url)}" target="_blank" rel="noopener" style="margin-left:6px; color:var(--eu-yellow); text-decoration:underline; font-size:0.68rem;">${escapeHtml(w.label || 'weights')}</a>`).join('') : ''}</div>
-        <div style="grid-column:1/-1; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
-          <span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700; margin-right:4px;">Input types</span>
-          ${dev.modalities && Array.isArray(dev.modalities.input) ? dev.modalities.input.map(m => `<span class="badge" style="font-size:0.68rem; border:1px solid var(--border-color);">${escapeHtml(m)}</span>`).join('') : '<span style="color:var(--text-muted);">—</span>'}
-          <span style="margin-left:8px; color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700; margin-right:4px;">Output</span>
-          ${dev.modalities && Array.isArray(dev.modalities.output) ? dev.modalities.output.map(m => `<span class="badge" style="font-size:0.68rem; border:1px solid var(--border-color);">${escapeHtml(m)}</span>`).join('') : '<span style="color:var(--text-muted);">—</span>'}
+      <div class="modal-modelsdev" style="margin-top:10px; padding:10px; background:rgba(255,204,0,0.035); border:1px solid rgba(255,204,0,0.13); border-radius:8px; display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.75rem;">
+        ${descInsideHtml}
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <div><span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Release</span><br><span style="color:var(--text-main);">${dev.release_date ? escapeHtml(dev.release_date) : '—'}</span></div>
+          <div><span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Knowledge cutoff</span><br><span style="color:var(--text-main);">${dev.knowledge ? escapeHtml(dev.knowledge) : '—'}</span></div>
+          <div><span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Weights</span><br>${dev.open_weights === true ? `<span style="color:var(--savings-color);">✓ Open</span>` : dev.open_weights === false ? `<span>✗ Closed</span>` : `<span style="color:var(--text-muted);">?</span>`} ${Array.isArray(dev.weights) && dev.weights.length ? dev.weights.map(w => `<a href="${escapeHtml(w.url)}" target="_blank" rel="noopener" style="margin-left:6px; color:var(--eu-yellow); text-decoration:underline; font-size:0.68rem;">${escapeHtml(w.label || 'weights')}</a>`).join('') : ''}</div>
         </div>
-        <div style="grid-column:1/-1; display:flex; flex-wrap:wrap; gap:4px;">
-          <span class="badge" style="font-size:0.68rem; border:1px solid var(--border-color); ${dev.reasoning ? 'color:var(--savings-color); border-color:var(--savings-color);' : 'color:var(--text-muted);'}">${dev.reasoning ? '✓' : dev.reasoning === false ? '—' : '?'} Reasoning</span>
-          <span class="badge" style="font-size:0.68rem; border:1px solid var(--border-color); ${dev.tool_call ? 'color:var(--savings-color); border-color:var(--savings-color);' : 'color:var(--text-muted);'}">${dev.tool_call ? '✓' : dev.tool_call === false ? '—' : '?'} Tool Call</span>
-          <span class="badge" style="font-size:0.68rem; border:1px solid var(--border-color); ${dev.structured_output ? 'color:var(--savings-color); border-color:var(--savings-color);' : 'color:var(--text-muted);'}">${dev.structured_output ? '✓' : dev.structured_output === false ? '—' : '?'} Structured</span>
-          <span style="margin-left:auto; font-size:0.62rem; color:var(--text-dark);">via <a href="https://models.dev" target="_blank" rel="noopener" style="color:var(--text-muted); text-decoration:underline;">models.dev</a> · ${dev.lab}/${modelObj.id}</span>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <div><span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Context / Output</span><br><span style="color:var(--text-main); font-family:var(--font-mono);">${dev.context ? dev.context.toLocaleString() : '—'} / ${dev.output ? dev.output.toLocaleString() : '—'}</span> <span style="color:var(--text-muted); font-size:0.68rem;">tokens</span></div>
+          <div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+            <span style="color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700; margin-right:4px;">Input types</span>
+            ${dev.modalities && Array.isArray(dev.modalities.input) ? dev.modalities.input.map(m => `<span class="badge" style="font-size:0.68rem; border:1px solid var(--border-color);">${escapeHtml(m)}</span>`).join('') : '<span style="color:var(--text-muted);">—</span>'}
+            <span style="margin-left:8px; color:var(--text-dark); text-transform:uppercase; font-size:0.65rem; font-weight:700; margin-right:4px;">Output</span>
+            ${dev.modalities && Array.isArray(dev.modalities.output) ? dev.modalities.output.map(m => `<span class="badge" style="font-size:0.68rem; border:1px solid var(--border-color);">${escapeHtml(m)}</span>`).join('') : '<span style="color:var(--text-muted);">—</span>'}
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:4px; justify-content:space-between; align-items:center;">
+            <span style="display:flex; flex-wrap:wrap; gap:4px;"><span class="badge" title="Supports reasoning / chain-of-thought (thinking mode)" style="font-size:0.68rem; border:1px solid var(--border-color); ${dev.reasoning ? 'color:var(--savings-color); border-color:var(--savings-color);' : 'color:var(--text-muted);'}">${dev.reasoning ? '✓' : dev.reasoning === false ? '—' : '?'} Reasoning</span>
+            <span class="badge" title="Supports tool / function calling" style="font-size:0.68rem; border:1px solid var(--border-color); ${dev.tool_call ? 'color:var(--savings-color); border-color:var(--savings-color);' : 'color:var(--text-muted);'}">${dev.tool_call ? '✓' : dev.tool_call === false ? '—' : '?'} Tool Call</span>
+            <span class="badge" title="Supports structured output (e.g. JSON mode / constrained decoding)" style="font-size:0.68rem; border:1px solid var(--border-color); ${dev.structured_output ? 'color:var(--savings-color); border-color:var(--savings-color);' : 'color:var(--text-muted);'}">${dev.structured_output ? '✓' : dev.structured_output === false ? '—' : '?'} Structured</span></span>
+            <span style="font-size:0.62rem; color:var(--text-dark); white-space:nowrap;">via <a href="https://models.dev/models/${encodeURIComponent(dev.lab)}/${encodeURIComponent(modelObj.id)}/" target="_blank" rel="noopener" style="color:var(--text-muted); text-decoration:underline;">models.dev</a></span>
+          </div>
         </div>
       </div>
   ` : '';
 
-  const guaranteedContextStr = modelObj.contextMin 
-    ? (modelObj.contextMin < modelObj.contextMax ? `${modelObj.contextMin.toLocaleString()} tokens (up to ${modelObj.contextMax.toLocaleString()})` : `${modelObj.contextMin.toLocaleString()} tokens`)
-    : 'Unknown';
-
-  const guaranteedMaxOutStr = modelObj.maxOutputMin 
-    ? (modelObj.maxOutputMin < modelObj.maxOutputMax ? `${modelObj.maxOutputMin.toLocaleString()} tokens (up to ${modelObj.maxOutputMax.toLocaleString()})` : `${modelObj.maxOutputMin.toLocaleString()} tokens`)
-    : 'Standard';
-
-  const universalBadgesHtml = (modelObj.universalCapabilities && modelObj.universalCapabilities.length > 0)
-    ? modelObj.universalCapabilities.map(c => `<span class="cap-badge-universal" title="Guaranteed across ALL providers offering this model">✓ ${c}</span>`).join('')
-    : '<span style="font-size:0.75rem; color:var(--text-dark);">None guaranteed across all offers</span>';
-
-  const partialBadgesHtml = (modelObj.partialCapabilities && modelObj.partialCapabilities.length > 0)
-    ? modelObj.partialCapabilities.map(p => `<span class="cap-badge-partial" title="Supported by ${p.providers.join(', ')} only (${p.supportedCount}/${p.totalCount} providers)">⚠ ${p.capability} (${p.providers.join(', ')})</span>`).join('')
-    : '';
+  // Readable benchmarks overview block — Quality (deggo) + EUR Value (EuroInference heuristic)
+  const deggo = modelObj.deggo || null;
+  const deggoMeta = (typeof DEGGO_META !== 'undefined' && DEGGO_META) ? DEGGO_META : null;
+  let deggoHtml = '';
+  if (deggo) {
+    const qv = deggo.qualityValue, pv = getValueScore(modelObj);
+    const qStr = qv !== null ? _numberFmt.format(qv) : '?';
+    const pStr = pv !== null ? _numberFmt.format(pv) : '?';
+    const blendedEUR = getBlendedEUR(modelObj);
+    const blendedStr = blendedEUR !== null ? `€${blendedEUR.toFixed(2)}` : '—';
+    const qualityTitle = `Quality v4 — deggo Quality Score (0–100), see models.deggo.fyi/docs for methodology.`;
+    const valueTitle = `EUR Value — Quality × affordabilityEU (EU cheapest offer's (in+out)/2 ${(blendedEUR!==null?`€${blendedEUR.toFixed(2)}`:'' )}, same offer). affordability = 1/(1+log10(1+blendedEUR*8)*0.45).`;
+    const qualityBox = `
+      <div style="padding:10px 12px; background:rgba(255,204,0,0.035); border:1px solid rgba(255,204,0,0.13); border-radius:8px; display:flex; flex-direction:column; gap:6px;">
+        <div title="${qualityTitle}" style="cursor:help;">
+          <span style="color:var(--text-dark); text-transform:uppercase; font-size:0.62rem; font-weight:800; letter-spacing:0.04em;">Quality Score</span><br>
+          <span style="font-family:var(--font-mono); font-size:1.45rem; font-weight:800; color:var(--text-main);">${qStr}</span><span style="font-size:0.7rem; color:var(--text-muted);"> / 100</span>
+        </div>
+        <div style="font-size:0.62rem; color:var(--text-dark); text-align:right;">via <a href="https://models.deggo.fyi/" target="_blank" rel="noopener" style="color:var(--text-muted); text-decoration:underline;">models.deggo.fyi</a> · Quality v4${deggoMeta && deggoMeta.updatedAt ? ` · ${escapeHtml(deggoMeta.updatedAt.slice(0,10))}` : ''}</div>
+      </div>`;
+    const valueBox = `
+      <div style="padding:10px 12px; background:rgba(255,204,0,0.035); border:1px solid rgba(255,204,0,0.13); border-radius:8px; display:flex; flex-direction:column; gap:6px;">
+        <div title="${valueTitle}" style="cursor:help;">
+          <span style="color:var(--text-dark); text-transform:uppercase; font-size:0.62rem; font-weight:800; letter-spacing:0.04em;">EUR Value Score</span><br>
+          <span style="font-family:var(--font-mono); font-size:1.45rem; font-weight:800; color:var(--text-main);">${pStr}</span><span style="font-size:0.7rem; color:var(--text-muted);"> / 100</span>
+          <span style="margin-left:8px; font-size:0.68rem; color:var(--text-muted);" title="EU cheapest blended list price: (input + output)/2 from the single cheapest EU offer, same offer (not cache-/workload-adjusted)">blended ${escapeHtml(blendedStr)}/1M</span>
+        </div>
+        <div style="font-size:0.62rem; color:var(--text-dark); text-align:right;">calculated by <a href="methodology.html" target="_blank" rel="noopener" style="color:var(--text-muted); text-decoration:underline;">EuroInference</a></div>
+      </div>`;
+    deggoHtml = `<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;">${qualityBox}${valueBox}</div>`;
+  } else {
+    deggoHtml = '';
+  }
 
   const overviewHtml = `
-    <div class="modal-overview-section">
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-        <span style="font-size:0.75rem; color:var(--text-dark); text-transform:uppercase; font-weight:800; letter-spacing:0.04em;">Creator: <span style="color:var(--text-main);">${modelObj.creator}</span>${dev ? ` <span style="color:var(--text-muted); font-weight:400;">· ${escapeHtml(dev.name)}</span>` : ''}</span>
-        <span style="font-size:0.72rem; color:var(--text-muted); background:rgba(255,255,255,0.04); padding:2px 8px; border-radius:4px; border:1px solid var(--border-color);">${offersList.length} Active European Offer${offersList.length > 1 ? 's' : ''}</span>
-      </div>
-      ${descHtml}
-      ${devHtml}
-      <div class="modal-consensus-bar">
-        <div class="consensus-metric-group">
-          <div class="consensus-metric">
-            <span class="metric-lbl">Guaranteed Context</span>
-            <span class="metric-val">${guaranteedContextStr}</span>
-          </div>
-          <div class="consensus-metric">
-            <span class="metric-lbl">Guaranteed Max Output</span>
-            <span class="metric-val">${guaranteedMaxOutStr}</span>
-          </div>
-        </div>
-        <div class="consensus-caps">
-          ${universalBadgesHtml}
-          ${partialBadgesHtml}
-        </div>
-      </div>
-    </div>
+      ${dev ? '' : `<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;"><span style="font-size:0.75rem; color:var(--text-dark); text-transform:uppercase; font-weight:800; letter-spacing:0.04em;">Creator: <span style="color:var(--text-main);">${escapeHtml(modelObj.creator)}</span></span></div>`}
+      ${dev ? devHtml : descStandaloneHtml}
+      ${deggoHtml}
   `;
 
   // 2. Provider Comparison Cards Grid (+ optional greyed-out non-EU reference card)
   const renderProviderCard = (off, idx, isBenchmark) => {
     const badgeClass = PROVIDER_BADGE_CLASS;
+    const isCheapest = !isBenchmark && cheapestModalTotal !== null && areCostsEqual(off.totalCost, cheapestModalTotal);
+    const badgeExtra = isCheapest ? ' badge-cheapest' : '';
+    const starHtml = isCheapest ? '<span class="cheapest-star" title="Lowest-price provider">★</span> ' : '';
+    const workloadVal = off.workloadCost !== null ? formatCurrency(off.workloadCost) : 'N/A';
+    const workloadSub = `${_intFmt.format(workloadInputTokens)} in + ${_intFmt.format(workloadOutputTokens)} out${cacheAwareCost && cachedInputShare>0 ? ` · ${Math.round(cachedInputShare*100)}% cached` : ''}`;
+    const workloadRowHtml = `
+        <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:0.5rem; padding-top:0.5rem; border-top:1px solid var(--border-color);">
+          <span class="lbl" style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700;">Workload Cost <span style="text-transform:none; font-weight:400; color:var(--text-muted);">/ req</span></span>
+          <span class="val" style="font-size:0.95rem; font-weight:700; font-family:var(--font-mono); color:${isCheapest ? 'var(--savings-color)' : 'var(--text-main)'};" title="${isCheapest ? 'Lowest workload cost' : workloadSub}">${workloadVal}</span>
+        </div>
+        <div style="font-size:0.62rem; color:var(--text-muted); text-align:right; margin-top:2px;">${workloadSub}</div>
+    `;
     // Benchmark cards get their faded look from CSS classes; emitting the shared
     // inline background/border here would override those class rules.
     const cardStyle = isBenchmark
@@ -1496,7 +1642,7 @@ function openModalWithSelection(modelObj) {
         cacheRows.push(`
           <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
             <span class="lbl" style="font-size:0.65rem; color:var(--savings-color); text-transform:uppercase; font-weight:700;">Cache Read / 1M</span>
-            <span class="val" style="font-size:0.9rem; font-weight:700; font-family:var(--font-mono); color:var(--savings-color);">${formatCurrency(off.cacheRates.read)}<span style="font-size:0.68rem; color:var(--text-muted); font-weight:400;"> ${off.nativeCache.read}</span></span>
+            <span class="val" style="font-size:0.9rem; font-weight:700; font-family:var(--font-mono); color:var(--savings-color);">${formatCurrency(off.cacheRates.read)}${off.nativeCache.read && !off.nativeCache.read.includes(selectedCurrency) ? `<span style="font-size:0.68rem; color:var(--text-muted); font-weight:400;"> ${off.nativeCache.read}</span>` : ''}</span>
           </div>
         `);
       }
@@ -1504,7 +1650,7 @@ function openModalWithSelection(modelObj) {
         cacheRows.push(`
           <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
             <span class="lbl" style="font-size:0.65rem; color:var(--savings-color); text-transform:uppercase; font-weight:700;">Cache Write / 1M</span>
-            <span class="val" style="font-size:0.9rem; font-weight:700; font-family:var(--font-mono); color:var(--savings-color);">${formatCurrency(off.cacheRates.write)}<span style="font-size:0.68rem; color:var(--text-muted); font-weight:400;"> ${off.nativeCache.write}</span></span>
+            <span class="val" style="font-size:0.9rem; font-weight:700; font-family:var(--font-mono); color:var(--savings-color);">${formatCurrency(off.cacheRates.write)}${off.nativeCache.write && !off.nativeCache.write.includes(selectedCurrency) ? `<span style="font-size:0.68rem; color:var(--text-muted); font-weight:400;"> ${off.nativeCache.write}</span>` : ''}</span>
           </div>
         `);
       }
@@ -1680,7 +1826,7 @@ function openModalWithSelection(modelObj) {
     return `
       <div class="modal-model-card${isBenchmark ? ' benchmark-card' : ''}" style="--card-i:${idx}; ${cardStyle}">
         <div style="display:flex; justify-content:${isBenchmark ? 'space-between' : 'flex-start'}; align-items:center; gap:6px; flex-wrap:wrap;">
-          <span class="badge ${badgeClass}">${off.providerName}</span>
+          <span class="badge ${badgeClass}${badgeExtra}">${starHtml}${escapeHtml(off.providerName)}</span>
           ${isBenchmark ? '<span class="badge badge-benchmark" title="Non-European aggregator, listed purely for price comparison">Non-EU Reference</span>' : ''}
         </div>
 
@@ -1707,6 +1853,8 @@ function openModalWithSelection(modelObj) {
             <span class="desc" style="font-size:0.68rem; color:var(--text-muted);">${off.origOut}</span>
           </div>
         </div>
+
+        ${workloadRowHtml}
 
         ${cacheRowHtml}
 
@@ -1755,7 +1903,7 @@ function openModalWithSelection(modelObj) {
       ${benchmarkCardHtml}
     </div>
     <p class="comparison-note">
-      <strong>Price comparison only.</strong> Listed prices do not indicate overall suitability. Before choosing a provider, verify supported features such as caching and tools, rate limits and quotas, context and output limits, latency, availability and reliability, data retention and training policies, data residency, security and compliance requirements, API compatibility, support, and SLA terms.
+      <strong>Price, Quality, and EUR Value comparison only.</strong> Listed prices, Quality (deggo Quality v4, synthesized) and EUR Value (Quality × affordabilityEU heuristic — not an official rating) do not indicate overall suitability. Sovereignty badges summarize self-published provider policies and listing signals (omitted = unknown, not a certification); data reflects the last successful refresh and may lag live catalogs. Before choosing a provider, verify supported features such as caching and tools, rate limits and quotas, context and output limits, latency, availability and reliability, data retention and training policies, data residency, security and compliance requirements, API compatibility, support, and SLA terms. Prices exclude VAT and are converted at the periodic ECB rate shown in the header.
       ${benchmarkCardHtml ? ' The greyed-out <strong>OpenRouter</strong> card is a non-EU aggregator shown purely for price comparison; it is excluded from all rankings, filters and cost estimates on this site.' : ''}
     </p>
   `;
@@ -1958,6 +2106,39 @@ function setupUIEventListeners() {
     });
   }
 
+  const dedupeToggle = document.getElementById('filter-dedupe');
+  if (dedupeToggle) {
+    dedupeToggle.addEventListener('change', (e) => {
+      dedupeLatestTwo = e.target.checked;
+      applyFiltersAndRender();
+    });
+  }
+
+  const dateSelect = document.getElementById('filter-date');
+  if (dateSelect) {
+    dateFilter = dateSelect.value;
+    dateSelect.addEventListener('change', (e) => {
+      dateFilter = e.target.value;
+      applyFiltersAndRender();
+    });
+  }
+
+  const hideUnknownToggle = document.getElementById('filter-hide-unknown');
+  if (hideUnknownToggle) {
+    hideUnknownDates = hideUnknownToggle.checked;
+    hideUnknownToggle.addEventListener('change', (e) => {
+      hideUnknownDates = e.target.checked;
+      applyFiltersAndRender();
+    });
+    const syncHideUnknownDisabled = () => {
+      const disabled = dateFilter === 'all';
+      hideUnknownToggle.disabled = disabled;
+      hideUnknownToggle.parentElement.style.opacity = disabled ? '0.5' : '1';
+    };
+    syncHideUnknownDisabled();
+    if (dateSelect) dateSelect.addEventListener('change', syncHideUnknownDisabled);
+  }
+
   ['input', 'output'].forEach(key => {
     const minInput = document.getElementById(`${key}-cost-min`);
     const maxInput = document.getElementById(`${key}-cost-max`);
@@ -2052,6 +2233,20 @@ function setupUIEventListeners() {
       const share = parseFloat(chip.dataset.share);
       if (Number.isNaN(share)) return;
       cachedInputShare = share;
+      // Realistic token presets per workflow (research: agentic ~50k/5k, RAG ~20k/1k, Chat ~2k/0.5k)
+      if (Math.abs(share - 0.8) < 1e-9) {
+        workloadInputTokens = 50000; workloadOutputTokens = 5000; cacheReuseRounds = 8;
+      } else if (Math.abs(share - 0.4) < 1e-9) {
+        workloadInputTokens = 20000; workloadOutputTokens = 1000; cacheReuseRounds = 4;
+      } else if (Math.abs(share) < 1e-9) {
+        workloadInputTokens = 2000; workloadOutputTokens = 500; cacheReuseRounds = 2;
+      }
+      const inEl = document.getElementById('filter-input-tokens');
+      const outEl = document.getElementById('filter-output-tokens');
+      const reuseEl = document.getElementById('filter-cache-reuse');
+      if (inEl) inEl.value = workloadInputTokens;
+      if (outEl) outEl.value = workloadOutputTokens;
+      if (reuseEl) reuseEl.value = String(cacheReuseRounds);
       updateCacheControls();
       applyFiltersAndRender();
     });
@@ -2069,8 +2264,66 @@ function setupUIEventListeners() {
     });
   }
 
+  // Show all — clear every filter so every model is shown
+  const showAllBtn = document.getElementById('show-all-btn');
+  if (showAllBtn) {
+    showAllBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Text search
+      searchQuery = '';
+      const searchInput = document.getElementById('filter-id');
+      if (searchInput) searchInput.value = '';
+      // Creator
+      selectedCreator = 'all';
+      const creatorSelect = document.getElementById('filter-creator');
+      if (creatorSelect) creatorSelect.value = 'all';
+      // Provider (multi-select checkboxes)
+      selectedProvider = [];
+      const providerMenu = document.getElementById('filter-source-menu');
+      if (providerMenu) {
+        providerMenu.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+      }
+      const providerToggle = document.getElementById('filter-source-toggle');
+      if (providerToggle) {
+        providerToggle.textContent = 'All Providers';
+        providerToggle.setAttribute('aria-expanded', 'false');
+      }
+      if (providerMenu) providerMenu.hidden = true;
+      // Dedupe — show all versions
+      dedupeLatestTwo = false;
+      const dedupeEl = document.getElementById('filter-dedupe');
+      if (dedupeEl) dedupeEl.checked = false;
+      // Date + hide unknown — show all dates, include unknown
+      dateFilter = 'all';
+      const dateEl = document.getElementById('filter-date');
+      if (dateEl) dateEl.value = 'all';
+      hideUnknownDates = false;
+      const hideUnknownEl = document.getElementById('filter-hide-unknown');
+      if (hideUnknownEl) {
+        hideUnknownEl.checked = false;
+        hideUnknownEl.disabled = true;
+        if (hideUnknownEl.parentElement) hideUnknownEl.parentElement.style.opacity = '0.5';
+      }
+      // Min context — no minimum
+      minContextSize = 0;
+      const ctxEl = document.getElementById('filter-context-size');
+      if (ctxEl) ctxEl.value = '';
+      document.querySelectorAll('#filter-context-size').forEach(el => { if (el !== ctxEl) el.value = ''; });
+      // Caching-only — show all providers
+      onlyCachingProviders = false;
+      const cacheOnlyEl = document.getElementById('filter-cache-only');
+      if (cacheOnlyEl) cacheOnlyEl.checked = false;
+      // Cost price filters — full range
+      costFilterRanges.input = { min: 0, max: Infinity, scaleMax: Infinity };
+      costFilterRanges.output = { min: 0, max: Infinity, scaleMax: Infinity };
+      configureCostFilters();
+      updateCacheControls();
+      applyFiltersAndRender();
+    });
+  }
+
   // Prevent sorting when clicking inside header filter inputs/selects
-  document.querySelectorAll('.header-filter-input, .provider-filter-toggle, .provider-filter-menu').forEach(el => {
+  document.querySelectorAll('.header-filter-input, .provider-filter-toggle, .provider-filter-menu, .show-all-btn').forEach(el => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
     });

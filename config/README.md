@@ -45,7 +45,7 @@ Fields:
 
 - `models`: object containing one entry per model family. Sorted A–Z.
   - Model key: canonical ID used for cross-provider grouping. Use lowercase and stable names. **Use `models.dev` id when available as canonical (official slug)** — e.g. `openai/gpt-4o` → `gpt-4o`.
-  - `display_name`: name shown in the table and detail view. Overwritten by `models.dev` `name` when enriched (`218/475`).
+  - `display_name`: name shown in the table and detail view. Overwritten by `models.dev` `name` when enriched.
   - `creator`: normalized model creator shown in creator filters. Overwritten by `models.dev` lab when enriched.
   - `aliases`: generic `alias → canonical` for all providers (e.g. `["r1"]` for `deepseek-r1`). Use sparingly; prefer `providers.<pid>.slugs` for per-provider ids. Sorted A–Z.
   - `providers`: provider-specific matching data.
