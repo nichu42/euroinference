@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Compare open LLM models, prices, context windows, and provider availability across European AI infrastructure.</strong>
+  <strong>Compare LLM models, prices, context windows, and provider availability across European AI infrastructure.</strong>
 </p>
 
 <p align="center">
