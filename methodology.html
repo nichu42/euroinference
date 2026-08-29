@@ -76,7 +76,7 @@ total = (p_eff·input + out·output) / 1,000,000</code></pre>
 <p>Defaults are <strong>Agentic 80% / R=8, on</strong>. That&#39;s intentionally below top agents (Claude Code 92% hits) and matches published measurements of 41–80% savings for agentic workloads.</p>
 <p>Per offer we show: <strong>Priced</strong> (rate published), <strong>Supported, no rate</strong>, <strong>Not supported</strong>, <strong>Unknown</strong>. Only *Priced* gives a discount.</p>
 <h2 id="where-the-numbers-come-from">Where the numbers come from</h2>
-<p>Prices are the providers&#39; public listings (Cortecs, EURouter, Mammouth, Mistral, etc.). Mistral <code>@regional</code> is 1.1×. Invalid rates are dropped.</p>
+<p>Prices are fetched directly from the providers&#39; own APIs twice daily from their public listings (Cortecs, EURouter, Mammouth, Mistral, etc.). Mistral <code>@regional</code> is 1.1×. Invalid rates are dropped.</p>
 <p>Quality is deggo&#39;s published Quality v4. We don&#39;t store the raw benchmark tables.</p>
 <p>EUR Value is our heuristic calculation: we take the cheapest EU offer *as a whole* — the offer with minimal <code>(in+out)/2</code> in EUR, input and output taken together from that same offer — and apply the affordability curve above (heuristic, not an econometric model).</p>
 <p>The <strong>OpenRouter</strong> card in the detail view is a non-EU reference for comparison only — never used for rankings or costs.</p>

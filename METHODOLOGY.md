@@ -35,7 +35,7 @@ Per offer we show: **Priced** (rate published), **Supported, no rate**, **Not su
 
 ## Where the numbers come from
 
-Prices are the providers' public listings (Cortecs, EURouter, Mammouth, Mistral, etc.). Mistral `@regional` is 1.1×. Invalid rates are dropped.
+Prices are fetched directly from the providers' own APIs twice daily from their public listings (Cortecs, EURouter, Mammouth, Mistral, etc.). Mistral `@regional` is 1.1×. Invalid rates are dropped.
 
 Quality is deggo's published Quality v4. We don't store the raw benchmark tables.
 
