@@ -20,6 +20,10 @@ The bundled font files are:
 
 The font files are included locally so the dashboard can render consistently without requesting font files from a third-party font CDN.
 
+## Icons
+
+- [Simple Icons](https://simpleicons.org/) — Ko-fi and Liberapay logos — [CC0 1.0 Universal](https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md) — Public domain dedication, no attribution required (credited here voluntarily). SVG paths inlined locally in `index.html`; no hotlinking to third parties.
+
 ## Project artwork
 
 The EuroInference name, logo, favicon, and visual styling in `assets/`, `favicon.*`, and `styles.css` are project artwork by the maintainer and contributors unless a file states otherwise. Please do not reuse the branding in a way that suggests official affiliation.
