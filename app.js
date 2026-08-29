@@ -1678,7 +1678,7 @@ function openModalWithSelection(modelObj) {
     // are precomputed per offer; narrative details merge from SOVEREIGNTY_META.
     const sov = off.sovereignty || {};
     const sovMeta = (typeof SOVEREIGNTY_META !== 'undefined' && SOVEREIGNTY_META)
-      ? SOVEREIGNTY_META[off.providerId === 'mistral-regional' ? 'mistral' : off.providerId] || {}
+      ? SOVEREIGNTY_META[off.providerId] || SOVEREIGNTY_META[off.providerId === 'mistral-regional' ? 'mistral' : off.providerId] || {}
       : {};
     const sovTitle = (key, extra) => {
       const metaBlock = key === 'jurisdiction' ? sovMeta.jurisdiction : sovMeta[key];

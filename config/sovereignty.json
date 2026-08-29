@@ -139,8 +139,60 @@
         ]
       },
       "processing_region": {
+        "region": "global",
+        "detail": "Global endpoint api.mistral.ai makes no region commitment; inference may run outside the EU (sub-processors include Google Cloud and Azure in EU and US). Only api.eu.mistral.ai (Mistral AI Regional, 1.1×) pins inference to the EU.",
+        "sources": [
+          "https://docs.mistral.ai/inference/regional-inference",
+          "https://mistral.ai/news/regional-inference-open-models-new-compute/",
+          "https://trust.mistral.ai/subprocessors",
+          "https://mistral.ai/products/aicloud/"
+        ]
+      },
+      "routing": {
+        "model": "direct",
+        "detail": "First-party inference platform; global endpoint may route to hyperscaler subprocessors (Google Cloud, Azure).",
+        "sources": [
+          "https://trust.mistral.ai/subprocessors"
+        ]
+      }
+    },
+    "mistral-regional": {
+      "display_name": "Mistral AI Regional",
+      "jurisdiction": {
+        "country": "France",
+        "in_eu": true,
+        "detail": "French company operating under EU data protection law — same jurisdiction as Mistral AI; regional product is a routing option, not a separate legal entity.",
+        "sources": [
+          "https://legal.mistral.ai/terms/privacy-policy"
+        ],
+        "code": "FR"
+      },
+      "retention": {
+        "zero_day_by_default": false,
+        "default_days": 30,
+        "detail": "Same 30-day abuse-monitoring retention as Mistral AI; Zero Data Retention available for eligible stateless calls (also on the regional endpoint).",
+        "sources": [
+          "https://legal.mistral.ai/terms/privacy-policy",
+          "https://docs.mistral.ai/admin/monitor-comply/zero-data-retention"
+        ]
+      },
+      "training": {
+        "uses_customer_data": false,
+        "detail": "Data sent through the API is not used for model training.",
+        "sources": [
+          "https://docs.mistral.ai/admin/monitor-comply/privacy-data-controls"
+        ]
+      },
+      "hosting": {
         "region": "eu",
-        "detail": "Inference from EU infrastructure by default; optional regional endpoints api.eu.mistral.ai / api.us.mistral.ai pin to EU or US (1.1x surcharge).",
+        "detail": "Control plane hosted in EU (La Plateforme); regional endpoint is api.eu.mistral.ai.",
+        "sources": [
+          "https://docs.mistral.ai/inference/regional-inference"
+        ]
+      },
+      "processing_region": {
+        "region": "eu",
+        "detail": "Inference pinned to EU via api.eu.mistral.ai (1.1× surcharge); guarantees EU data residency. Unlike the default La Plateforme endpoint (EU by default, optional pin), this offer is EU-only.",
         "sources": [
           "https://docs.mistral.ai/inference/regional-inference",
           "https://mistral.ai/news/regional-inference-open-models-new-compute/"
@@ -148,8 +200,10 @@
       },
       "routing": {
         "model": "direct",
-        "detail": "First-party inference platform.",
-        "sources": []
+        "detail": "First-party inference — same Mistral fleet, but routed exclusively to the EU fleet via the regional endpoint.",
+        "sources": [
+          "https://docs.mistral.ai/inference/regional-inference"
+        ]
       }
     },
     "edenai": {

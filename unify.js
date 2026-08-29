@@ -328,7 +328,11 @@ function resolveOfferSovereignty(providerId, rawOffer, sovereigntyConfig) {
   const pin = offerRegionPin(providerId, rawOffer);
   if (pin) {
     sov.region = pin;
-    sov.details.region = { detail: `Region pinned by this listing (${REGION_PIN_LABELS[pin] || pin}).`, source: '' };
+    if (providerId === 'mistral-regional' && cfg && cfg.processing_region && cfg.processing_region.detail) {
+      sov.details.region = { detail: cfg.processing_region.detail, source: (cfg.processing_region.sources || [])[0] || '' };
+    } else {
+      sov.details.region = { detail: `Region pinned by this listing (${REGION_PIN_LABELS[pin] || pin}).`, source: '' };
+    }
   }
   return sov;
 }
@@ -871,8 +875,7 @@ function buildUnifiedModels(options) {
     if (!group.allListings) continue;
     for (const [offerKey, listings] of Object.entries(group.allListings)) {
       if (!Array.isArray(listings) || listings.length <= 1) continue;
-      const cfgProviderId = offerKey === 'mistral-regional' ? 'mistral' : offerKey;
-      const euListings = listings.filter(l => offerRegionPin(cfgProviderId, l.rawModel) === 'eu');
+      const euListings = listings.filter(l => offerRegionPin(offerKey, l.rawModel) === 'eu');
       if (euListings.length === 0 || euListings.length === listings.length) continue;
       const survivors = [...euListings].sort((a, b) => {
         const la = getCleanModelId(a.rawModel.id).length;
@@ -1087,9 +1090,8 @@ function buildUnifiedModels(options) {
     // Per-offer data-sovereignty facts, resolved once at generation time.
     const sovereigntyByProvider = {};
     for (const [offerKey, raw] of Object.entries(g.offers)) {
-      const cfgProviderId = offerKey === 'mistral-regional' ? 'mistral' : offerKey;
       sovereigntyByProvider[offerKey] = leanSovereignty(
-        resolveOfferSovereignty(cfgProviderId, raw, sovereigntyConfig)
+        resolveOfferSovereignty(offerKey, raw, sovereigntyConfig)
       );
     }
 
