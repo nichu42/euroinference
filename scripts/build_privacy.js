@@ -120,6 +120,7 @@ function buildPage({ title, effectiveDate, body }) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="${escapedTitle}.">
+  <meta name="keywords" content="EuroInference privacy policy, GDPR compliance, impressum, AI data privacy, European AI telemetry">
   <title>${escapedTitle} | EuroInference</title>
   <link rel="canonical" href="https://euroinference.eu/privacy.html">
   <meta name="author" content="nichu42">
@@ -133,8 +134,10 @@ function buildPage({ title, effectiveDate, body }) {
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="EuroInference">
   <meta property="og:image" content="https://euroinference.eu/assets/logo_250px.webp">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
   <meta property="og:locale" content="en">
-  <meta name="twitter:card" content="summary">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="${escapedTitle} | EuroInference">
   <meta name="twitter:description" content="${escapedTitle} — EuroInference legal disclosures.">
   <meta name="twitter:image" content="https://euroinference.eu/assets/logo_250px.webp">
@@ -148,12 +151,33 @@ function buildPage({ title, effectiveDate, body }) {
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "Article",
-    "headline": "${escapedTitle}",
-    "about": "Legal disclosures and privacy policy for EuroInference",
-    "inLanguage": "en",
-    "isPartOf": { "@type": "WebSite", "name": "EuroInference", "url": "https://euroinference.eu/" },
-    "license": "https://github.com/nichu42/euroinference/blob/main/LICENSE"
+    "@graph": [
+      {
+        "@type": "Article",
+        "headline": ${JSON.stringify(title)},
+        "about": "Legal disclosures and privacy policy for EuroInference",
+        "inLanguage": "en",
+        "isPartOf": { "@type": "WebSite", "name": "EuroInference", "url": "https://euroinference.eu/" },
+        "license": "https://github.com/nichu42/euroinference/blob/main/LICENSE"
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "Home",
+            "item": "https://euroinference.eu/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": ${JSON.stringify(title)},
+            "item": "https://euroinference.eu/privacy.html"
+          }
+        ]
+      }
+    ]
   }
   </script>
 </head>
