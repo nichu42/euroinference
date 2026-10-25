@@ -408,6 +408,50 @@
         ]
       }
     },
+    "melious": {
+      "display_name": "Melious AI",
+      "jurisdiction": {
+        "country": "Germany",
+        "code": "DE",
+        "in_eu": true,
+        "detail": "Melious AI GmbH, Campus Starterzentrum Geb. A1.2, 66123 Saarbrücken, Germany; offer intended exclusively for businesses (§14 BGB), prices net plus VAT.",
+        "sources": [
+          "https://melious.ai/",
+          "https://melious.ai/pricing"
+        ]
+      },
+      "retention": {
+        "zero_day_by_default": true,
+        "detail": "Melious doesn't log the content of prompts or responses; only operational metadata (request_id, token counts, model/provider, energy/cost). Providers may keep short-lived operational logs for stability monitoring.",
+        "sources": [
+          "https://melious.ai/docs/concepts/privacy"
+        ]
+      },
+      "training": {
+        "uses_customer_data": false,
+        "detail": "No provider on the network trains on traffic — condition of being listed; if a provider changes that policy, they come off the list. Melious doesn't train on prompts/responses.",
+        "sources": [
+          "https://melious.ai/docs/concepts/privacy",
+          "https://melious.ai/docs/concepts/providers"
+        ]
+      },
+      "processing_region": {
+        "region": "eu",
+        "detail": "Every inference request runs on a provider inside the EU; no US or APAC fallback, no mirroring outside the bloc. Partners: Infercom DE, IONOS DE, OVHcloud FR, Scaleway FR, Regolo IT, Tensorix IE/FI, Berget AI SE, Verda FI.",
+        "sources": [
+          "https://melious.ai/docs/concepts/privacy",
+          "https://melious.ai/docs/concepts/providers"
+        ]
+      },
+      "routing": {
+        "model": "aggregator",
+        "detail": "Gateway routes across 8 EU inference partners (plus self-operated capacity); flavor suffixes :speed/:price/:eco bias routing. Open-weight models only.",
+        "sources": [
+          "https://melious.ai/docs/concepts/providers",
+          "https://melious.ai/docs/concepts/models"
+        ]
+      }
+    },
     "requesty": {
       "display_name": "Requesty AI",
       "jurisdiction": {
