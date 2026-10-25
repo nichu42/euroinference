@@ -80,6 +80,7 @@ let PROVIDER_DISPLAY_NAMES = {
   opper: 'Opper AI',
   eurouter: 'EURouter',
   greenpt: 'GreenPT',
+  melious: 'Melious AI',
   requesty: 'Requesty AI',
   openrouter: 'OpenRouter'
 };
@@ -367,6 +368,8 @@ function getNativeInputCost(providerId, offer) {
         ? parseFloat(offer.pricing.prompt) * 1000000 : null;
     case 'greenpt':
       return offer.pricing && offer.pricing.promptToken !== undefined ? offer.pricing.promptToken : null;
+    case 'melious':
+      return offer.pricing && offer.pricing.input_cost_per_million_eur !== undefined ? offer.pricing.input_cost_per_million_eur : null;
     case 'requesty':
       return offer.input_price !== undefined ? offer.input_price * 1000000 : null;
     case 'openrouter':
@@ -398,6 +401,8 @@ function getNativeOutputCost(providerId, offer) {
         ? parseFloat(offer.pricing.completion) * 1000000 : null;
     case 'greenpt':
       return offer.pricing && offer.pricing.completionToken !== undefined ? offer.pricing.completionToken : null;
+    case 'melious':
+      return offer.pricing && offer.pricing.output_cost_per_million_eur !== undefined ? offer.pricing.output_cost_per_million_eur : null;
     case 'requesty':
       return offer.output_price !== undefined ? offer.output_price * 1000000 : null;
     case 'openrouter':
@@ -446,6 +451,9 @@ function getNativeCacheRates(providerId, offer) {
       break;
     case 'greenpt':
       read = positiveRate(offer.pricing?.cachedPromptToken);
+      break;
+    case 'melious':
+      read = positiveRate(offer.pricing?.cache_read_cost_per_million_eur);
       break;
     case 'openrouter':
       read = positiveRate(offer.pricing?.input_cache_read);
@@ -516,6 +524,9 @@ function normalizeOffer(providerId, rawModel, sovereigntyConfig) {
   } else if (providerId === 'greenpt') {
     contextSize = typeof rawModel.contextWindowTokens === 'number' ? rawModel.contextWindowTokens : (typeof rawModel.context_length === 'number' ? rawModel.context_length : null);
     maxOutputTokens = typeof rawModel.maxOutputTokens === 'number' ? rawModel.maxOutputTokens : null;
+  } else if (providerId === 'melious') {
+    contextSize = typeof rawModel.context_length === 'number' ? rawModel.context_length : null;
+    maxOutputTokens = typeof rawModel.max_output_tokens === 'number' ? rawModel.max_output_tokens : null;
   } else if (providerId === 'requesty') {
     contextSize = typeof rawModel.context_window === 'number' ? rawModel.context_window : null;
     maxOutputTokens = typeof rawModel.max_output_tokens === 'number' ? rawModel.max_output_tokens : null;
@@ -538,6 +549,7 @@ function normalizeOffer(providerId, rawModel, sovereigntyConfig) {
   const hasReasoning =
     (providerId === 'cortecs' && ((Array.isArray(rawModel.supported_features) && rawModel.supported_features.includes('reasoning')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Reasoning')))) ||
     (providerId === 'requesty' && rawModel.supports_reasoning === true) ||
+    (providerId === 'melious' && capabilityObject.supports_reasoning === true) ||
     (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('reasoning')) ||
     (providerId === 'eurouter' && (rawModel.reasoning === true || (Array.isArray(rawModel.tags) && rawModel.tags.includes('reasoning')))) ||
     (providerId === 'edenai' && rawModel.capabilities && (rawModel.capabilities.reasoning || rawModel.capabilities.thought)) ||
@@ -554,6 +566,7 @@ function normalizeOffer(providerId, rawModel, sovereigntyConfig) {
   const hasTools =
     (providerId === 'cortecs' && ((Array.isArray(rawModel.supported_features) && rawModel.supported_features.includes('tools')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Tools')))) ||
     (providerId === 'requesty' && rawModel.supports_tool_calling === true) ||
+    (providerId === 'melious' && capabilityObject.supports_function_calling === true) ||
     (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('tools')) ||
     (providerId === 'eurouter' && Array.isArray(rawModel.tags) && (rawModel.tags.includes('tools') || rawModel.tags.includes('function_calling'))) ||
     (providerId === 'edenai' && rawModel.capabilities && (rawModel.capabilities.tools || rawModel.capabilities.function_calling)) ||
@@ -563,13 +576,15 @@ function normalizeOffer(providerId, rawModel, sovereigntyConfig) {
   recordCapability('Tools', hasTools, explicitlyFalse(
     rawModel.supports_tool_calling,
     capabilityObject.tools,
-    capabilityObject.function_calling
+    capabilityObject.function_calling,
+    capabilityObject.supports_function_calling
   ));
 
   // Explicit or inferred Vision / Multimodal
   const hasVision =
     (providerId === 'cortecs' && ((Array.isArray(rawModel.input_modalities) && rawModel.input_modalities.includes('image')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Image')))) ||
     (providerId === 'requesty' && rawModel.supports_vision === true) ||
+    (providerId === 'melious' && (capabilityObject.supports_vision === true || (Array.isArray(rawModel.input_modalities) && rawModel.input_modalities.includes('image')))) ||
     (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('vision')) ||
     (providerId === 'eurouter' && Array.isArray(rawModel.tags) && (rawModel.tags.includes('vision') || rawModel.tags.includes('multimodal'))) ||
     (providerId === 'edenai' && rawModel.capabilities && (rawModel.capabilities.vision || (Array.isArray(rawModel.capabilities.input_modalities) && rawModel.capabilities.input_modalities.includes('image')))) ||
@@ -578,7 +593,8 @@ function normalizeOffer(providerId, rawModel, sovereigntyConfig) {
     (/\b(vision|image|vl|omni|pixtral|glm-5v)\b/i.test(idLower));
   recordCapability('Vision', hasVision, explicitlyFalse(
     rawModel.supports_vision,
-    capabilityObject.vision
+    capabilityObject.vision,
+    capabilityObject.supports_vision
   ));
 
   // Explicit or inferred Code
@@ -594,6 +610,7 @@ function normalizeOffer(providerId, rawModel, sovereigntyConfig) {
   // Explicit or inferred Audio
   const hasAudio =
     (providerId === 'cortecs' && ((Array.isArray(rawModel.input_modalities) && rawModel.input_modalities.includes('audio')) || (Array.isArray(rawModel.tags) && rawModel.tags.includes('Audio')))) ||
+    (providerId === 'melious' && Array.isArray(rawModel.input_modalities) && rawModel.input_modalities.includes('audio')) ||
     (providerId === 'edenai' && rawModel.capabilities && Array.isArray(rawModel.capabilities.input_modalities) && rawModel.capabilities.input_modalities.includes('audio')) ||
     (/\b(audio|voice|speech|voxtral)\b/i.test(idLower));
   recordCapability('Audio', hasAudio, explicitlyFalse(
@@ -605,6 +622,7 @@ function normalizeOffer(providerId, rawModel, sovereigntyConfig) {
   const hasStructuredOutput =
     (providerId === 'cortecs' && Array.isArray(rawModel.supported_features) && rawModel.supported_features.includes('json_mode')) ||
     (providerId === 'requesty' && (rawModel.supports_output_json_schema || rawModel.supports_output_json_object)) ||
+    (providerId === 'melious' && (capabilityObject.supports_structured_output === true || capabilityObject.supports_json_schema === true)) ||
     (providerId === 'opper' && Array.isArray(rawModel.capabilities) && rawModel.capabilities.includes('structured_output')) ||
     (providerId === 'edenai' && rawModel.capabilities && rawModel.capabilities.structured_output) ||
     (providerId === 'openrouter' && Array.isArray(rawModel.supported_parameters) && rawModel.supported_parameters.includes('structured_outputs')) ||
@@ -612,7 +630,9 @@ function normalizeOffer(providerId, rawModel, sovereigntyConfig) {
   recordCapability('Structured Output', hasStructuredOutput, explicitlyFalse(
     rawModel.supports_output_json_schema,
     rawModel.supports_output_json_object,
-    capabilityObject.structured_output
+    capabilityObject.structured_output,
+    capabilityObject.supports_structured_output,
+    capabilityObject.supports_json_schema
   ));
 
   // Prompt Caching — tri-state via published rates or explicit provider flags

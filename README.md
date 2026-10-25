@@ -41,7 +41,7 @@ EuroInference is a static, browser-based comparison dashboard for people evaluat
 
 ## Highlights
 
-- Compare model families across Cortecs, Eden AI, EURouter, GreenPT, Mammouth AI, Mistral AI, Opper AI, and Requesty AI.
+- Compare model families across Cortecs, Eden AI, EURouter, GreenPT, Mammouth AI, Melious AI, Mistral AI, Opper AI, and Requesty AI.
 - Group provider-specific IDs into normalized model families and creator names.
 - Switch between EUR and USD views using the generated Frankfurter/ECB reference rate.
 - Sort by **Quality Score** (from [models.deggo.fyi](https://models.deggo.fyi/docs) Quality v4) and **EUR Value Score** (Quality × EU affordability over cheapest EU blended *list price*: `(input + output)/2` from the single cheapest EU offer, same offer — not workload- or cache-adjusted, higher is better; `affordability = 1/(1+log10(1+blended·8)·0.45)`).
@@ -81,6 +81,7 @@ The updater currently collects:
 | Opper AI | Model catalog, capabilities, regions, and pricing |
 | EURouter | Model catalog, tags, provider offers, and pricing |
 | GreenPT | Model catalog and EUR pricing via public `/v1/pricing` |
+| Melious AI | Authenticated model catalog with EUR pricing via `/v1/models?include_meta=true` (`MELIOUS_API_KEY`, scope `inference.models`) |
 | Requesty AI | Model catalog, capabilities, retention, and pricing |
 | Mistral AI | Authenticated model catalog plus public USD/EUR pricing pages |
 | OpenRouter | Non-EU reference offers for the detail modal comparison only (excluded from rankings) |
@@ -124,13 +125,14 @@ node scripts/update_data.js
 
 The updater retries temporary failures, validates provider response shapes, records per-source status in `UPDATE_STATUS`, and writes the generated output to `data.js`. Do not edit `data.js` by hand; update the source logic or dictionaries instead.
 
-Mistral's authenticated catalog requires `MISTRAL_API_KEY`. For local work, place it in a gitignored root `.env` file:
+Mistral's authenticated catalog requires `MISTRAL_API_KEY`. Melious's authenticated catalog requires `MELIOUS_API_KEY` (scope `inference.models`). For local work, place them in a gitignored root `.env` file:
 
 ```text
 MISTRAL_API_KEY=your-key-here
+MELIOUS_API_KEY=your-key-here
 ```
 
-The GitHub Actions workflow runs on relevant changes, twice daily, and on manual dispatch. It reads `MISTRAL_API_KEY` from the repository secret and commits generated data changes when the output changes. Never commit `.env`, API keys, or provider credentials.
+The GitHub Actions workflow runs on relevant changes, twice daily, and on manual dispatch. It reads `MISTRAL_API_KEY` and `MELIOUS_API_KEY` from the repository secrets and commits generated data changes when the output changes. Never commit `.env`, API keys, or provider credentials.
 
 ## Configuration
 
