@@ -1834,7 +1834,7 @@ function openModalWithSelection(modelObj) {
           <span style="font-size:0.65rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 4px;">API Model Slug${sov.region === 'eu' && off.normOffer.rawModelId.includes('@') ? ' <span style=&quot;color:var(--savings-color); text-transform:none; font-weight:400;&quot;>(EU pin required for ✓ EU below)</span>' : ''}</span>
           <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 5px 8px; border-radius: 6px; justify-content:space-between; gap: 8px; min-width:0;">
             <code style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-main); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0;">${escapeHtml(off.normOffer.rawModelId)}</code>
-            <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${off.normOffer.rawModelId.replace(/'/g, "\\'")}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; transition: color 0.15s; flex-shrink:0;" title="Copy to clipboard">
+            <button class="copy-slug-btn" data-clipboard-text="${escapeHtml(off.normOffer.rawModelId)}" onclick="navigator.clipboard.writeText(this.dataset.clipboardText); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; transition: color 0.15s; flex-shrink:0;" title="Copy to clipboard">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             </button>
           </div>
@@ -1877,8 +1877,8 @@ function openModalWithSelection(modelObj) {
             <span style="font-size:0.6rem; color:var(--text-dark); text-transform:uppercase; font-weight:700; display:block; margin-bottom: 3px;">Also Available As (Rolling Alias)</span>
             ${off.normOffer.alternateSlugs.map(alt => `
               <div class="slug-copy-container" style="display:flex; align-items:center; background: rgba(255,255,255,0.015); border: 1px dashed var(--border-color); padding: 3px 6px; border-radius: 5px; justify-content:space-between; gap: 6px; margin-bottom: 4px; min-width:0;">
-                  <code style="font-family:var(--font-mono); font-size:0.7rem; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0;">${displayModelId(alt.rawModelId)}</code>
-                <button class="copy-slug-btn" onclick="navigator.clipboard.writeText('${displayModelId(alt.rawModelId)}'); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; flex-shrink:0;" title="Copy alias slug">
+                  <code style="font-family:var(--font-mono); font-size:0.7rem; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0;">${escapeHtml(displayModelId(alt.rawModelId))}</code>
+                <button class="copy-slug-btn" data-clipboard-text="${escapeHtml(alt.rawModelId)}" onclick="navigator.clipboard.writeText(this.dataset.clipboardText); showCopyTooltip(this);" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding: 2px; display:flex; align-items:center; flex-shrink:0;" title="Copy alias slug">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
               </div>

@@ -150,7 +150,7 @@ function buildPage({ title, body }) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="${escapedTitle}.">
+  <meta name="description" content="Credits and attributions for EuroInference: data sources, fonts, and artwork behind the European LLM price comparison dashboard.">
   <title>${escapedTitle} | EuroInference</title>
   <link rel="canonical" href="https://euroinference.eu/credits.html">
   <meta name="author" content="nichu42">
@@ -164,11 +164,13 @@ function buildPage({ title, body }) {
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="EuroInference">
   <meta property="og:image" content="https://euroinference.eu/assets/logo_250px.webp">
+  <meta property="og:image:alt" content="EuroInference logo">
   <meta property="og:locale" content="en">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="${escapedTitle} | EuroInference">
   <meta name="twitter:description" content="${escapedTitle} — EuroInference attributions.">
   <meta name="twitter:image" content="https://euroinference.eu/assets/logo_250px.webp">
+  <meta name="twitter:image:alt" content="EuroInference logo">
   <link rel="icon" type="image/webp" href="assets/logo_100px.webp">
   <link rel="apple-touch-icon" href="assets/logo_250px.webp">
   <link rel="stylesheet" href="styles.css?v=20260838">
@@ -179,12 +181,33 @@ function buildPage({ title, body }) {
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "Article",
-    "headline": "${escapedTitle}",
-    "about": "Credits and attributions for EuroInference",
-    "inLanguage": "en",
-    "isPartOf": { "@type": "WebSite", "name": "EuroInference", "url": "https://euroinference.eu/" },
-    "license": "https://github.com/nichu42/euroinference/blob/main/LICENSE"
+    "@graph": [
+      {
+        "@type": "Article",
+        "headline": ${JSON.stringify(title)},
+        "about": "Credits and attributions for EuroInference",
+        "inLanguage": "en",
+        "isPartOf": { "@type": "WebSite", "name": "EuroInference", "url": "https://euroinference.eu/" },
+        "license": "https://github.com/nichu42/euroinference/blob/main/LICENSE"
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "Home",
+            "item": "https://euroinference.eu/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": ${JSON.stringify(title)},
+            "item": "https://euroinference.eu/credits.html"
+          }
+        ]
+      }
+    ]
   }
   </script>
 </head>
