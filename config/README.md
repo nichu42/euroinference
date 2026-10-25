@@ -106,7 +106,7 @@ When several slugs resolve to the same canonical family (current slug, date snap
 
 This file holds data-sovereignty facts per provider (jurisdiction, retention, training, hosting vs inference, routing) for providers whose APIs do not expose this information. Facts must come from public policy pages and carry their source URLs; details quote or paraphrase those pages.
 
-- Provider keys match the internal provider IDs (`mammouth`, `melious`, `cortecs`, `mistral`, `edenai`, `opper`, `eurouter`, `requesty`, `openrouter`).
+- Provider keys match the internal provider IDs (`mammouth`, `cortecs`, `mistral`, `edenai`, `opper`, `eurouter`, `requesty`, `openrouter`).
 - Each attribute block (`jurisdiction`, `retention`, `training`, `hosting`, `processing_region`, `routing`) is optional: **an omitted block means unknown** and is rendered as such — never silently filled in.
 - `retention.zero_day_by_default` and `training.uses_customer_data` are booleans; `retention.default_days` is a number when a concrete default period is documented.
 - `hosting.region` = gateway/control plane; `processing_region.region` = model inference — each one of `eu`, `us`, `global`. Split per your request: *hosting* and *inference* are shown separately in the detail modal (`Hosting ✓ EU-Sovereign` vs `Inference ✓ EU (US)`). `EU-Sovereign` = `jurisdiction EU` + `hosting EU` non-US (`Scaleway`/`OVHcloud`/`Hetzner`, not `AWS`/`Azure`/`GCP`) + `inference EU` non-US + `(European model e.g. Mistral Regional || open-weights e.g. Llama/Qwen/DeepSeek on non-US EU infra)`.

@@ -69,10 +69,6 @@ function getOfferInputCostEUR(providerId, offer, rate) {
     const v = offer.pricing?.promptToken;
     return Number.isFinite(v) && v > 0 ? v : null;
   }
-  if (providerId === 'melious') {
-    const v = offer.pricing?.input_cost_per_million_eur;
-    return Number.isFinite(v) && v > 0 ? v : null;
-  }
   if (providerId === 'requesty') {
     const v = offer.input_price;
     return Number.isFinite(v) && v > 0 ? (v * 1000000) / rate : null;
@@ -118,10 +114,6 @@ function getOfferOutputCostEUR(providerId, offer, rate) {
     const v = offer.pricing?.completionToken;
     return Number.isFinite(v) && v > 0 ? v : null;
   }
-  if (providerId === 'melious') {
-    const v = offer.pricing?.output_cost_per_million_eur;
-    return Number.isFinite(v) && v > 0 ? v : null;
-  }
   if (providerId === 'requesty') {
     const v = offer.output_price;
     return Number.isFinite(v) && v > 0 ? (v * 1000000) / rate : null;
@@ -160,8 +152,6 @@ function getOfferCacheRatesEUR(providerId, offer, rate) {
     }
   } else if (providerId === 'greenpt') {
     if (Number.isFinite(offer.pricing?.cachedPromptToken)) read = offer.pricing.cachedPromptToken;
-  } else if (providerId === 'melious') {
-    if (Number.isFinite(offer.pricing?.cache_read_cost_per_million_eur)) read = offer.pricing.cache_read_cost_per_million_eur;
   } else if (providerId === 'requesty') {
     if (Number.isFinite(offer.cached_price)) read = offer.cached_price * 1000000 / rate;
     if (Number.isFinite(offer.caching_price)) write = offer.caching_price * 1000000 / rate;
@@ -291,7 +281,6 @@ async function run() {
   let eurouterData = null;
   let requestyData = null;
   let greenptData = null;
-  let meliousData = null;
   let mistralData = null;
   let mistralApiModels = null;
   let openrouterData = null;
@@ -406,22 +395,6 @@ async function run() {
     console.error('Failed to fetch GreenPT models:', err.message);
   }
 
-  // 8b. Fetch Melious models (EUR pricing via authenticated /v1/models?include_meta=true).
-  // Requires MELIOUS_API_KEY with scope inference.models (like Mistral). Skipped gracefully when missing.
-  try {
-    if (!process.env.MELIOUS_API_KEY) throw new Error('MELIOUS_API_KEY is not configured');
-    const res = await fetchWithRetry('https://api.melious.ai/v1/models?include_meta=true', {
-      headers: { Authorization: `Bearer ${process.env.MELIOUS_API_KEY}` }
-    }, 'Melious AI');
-    const json = await res.json();
-    meliousData = buildMeliousCatalog(validateModelRecords(json.data, 'Melious AI'));
-    updateStatus.melious = Array.isArray(meliousData);
-    console.log(`Fetched ${meliousData.length} Melious AI chat offers.`);
-  } catch (err) {
-    updateStatus.melious = false;
-    console.warn('Failed to fetch Melious AI models:', err.message);
-  }
-
   // 9. Fetch Mistral's API catalog first, then join it to public pricing.
   try {
     if (!process.env.MISTRAL_API_KEY) throw new Error('MISTRAL_API_KEY is not configured');
@@ -507,7 +480,6 @@ async function run() {
   if (eurouterData) eurouterData = eurouterData.map(m => pickFields('eurouter', m));
   if (requestyData) requestyData = requestyData.map(m => pickFields('requesty', m));
   if (greenptData) greenptData = greenptData.map(m => pickFields('greenpt', m));
-  if (meliousData) meliousData = meliousData.map(m => pickFields('melious', m));
   if (mistralData) mistralData = mistralData.map(m => pickFields('mistral', m));
   if (openrouterData) openrouterData = openrouterData.map(m => pickFields('openrouter', m));
 
@@ -520,7 +492,6 @@ async function run() {
   eurouterData = normalizeProviderData('eurouter', eurouterData);
   requestyData = normalizeProviderData('requesty', requestyData);
   greenptData = normalizeProviderData('greenpt', greenptData);
-  meliousData = normalizeProviderData('melious', meliousData);
   openrouterData = normalizeProviderData('openrouter', openrouterData);
 
   // Unify everything at generation time: grouping, alias resolution, EU-region
@@ -537,7 +508,6 @@ async function run() {
       eurouter: eurouterData || [],
       requesty: requestyData || [],
       greenpt: greenptData || [],
-      melious: meliousData || [],
       openrouter: openrouterData || []
     },
     sovereignty: sovereigntyMap,
@@ -653,7 +623,6 @@ async function run() {
     opper: ['pricing', 'region'],
     eurouter: ['pricing', 'tags'],
     greenpt: ['pricing', 'provider', 'type', 'contextWindowTokens', 'maxOutputTokens'],
-    melious: ['pricing', 'capabilities', 'context_length', 'max_output_tokens', 'input_modalities', 'output_modalities'],
     requesty: ['input_price', 'output_price', 'cached_price', 'caching_price', 'supports_caching',
       'supports_reasoning', 'supports_vision', 'supports_tool_calling', 'supports_output_json_schema',
       'data_retention_days', 'data_used_for_training', 'geolocation', 'context_window', 'max_output_tokens'],
@@ -938,56 +907,6 @@ function buildGreenPTCatalog(rawModels) {
   });
 }
 
-// Build Melious catalog from authenticated GET /v1/models?include_meta=true (EUR per 1M, docs/reference/models).
-// Only chat type with positive input+output pricing is kept; embeddings/image/audio/reranker/decision/guardrail are non-comparable.
-function buildMeliousCatalog(rawModels) {
-  const seen = new Set();
-  return rawModels.flatMap(model => {
-    if (!model || typeof model !== 'object') return [];
-    let id = String(model.id || '').trim();
-    if (!id) return [];
-    // Strip routing flavor suffixes (:speed, :price, :eco, :balanced) — routing preference, not a distinct model.
-    id = id.split(':')[0].trim();
-    if (!id) return [];
-    const lowerId = id.toLowerCase();
-    // Melious is open-weight only; opus/sonnet/haiku IDs are Anthropic-mapped aliases on /v1/messages — skip to avoid polluting Claude families.
-    if (/(opus|sonnet|haiku)/i.test(lowerId)) return [];
-    if (seen.has(lowerId)) return [];
-    const meta = model._meta && typeof model._meta === 'object' ? model._meta : {};
-    const type = String(meta.type || '').toLowerCase();
-    if (type && type !== 'chat') return [];
-    const pricing = meta.pricing && typeof meta.pricing === 'object' ? meta.pricing : {};
-    const input = Number(pricing.input_cost_per_million_eur);
-    const output = Number(pricing.output_cost_per_million_eur);
-    if (!Number.isFinite(input) || !Number.isFinite(output) || input <= 0 || output <= 0) return [];
-    const cacheRead = Number(pricing.cache_read_cost_per_million_eur);
-    const caps = meta.capabilities && typeof meta.capabilities === 'object' ? meta.capabilities : {};
-    const capabilities = {};
-    if (caps.function_calling === true) capabilities.supports_function_calling = true;
-    if (caps.vision === true) capabilities.supports_vision = true;
-    if (caps.reasoning === true) capabilities.supports_reasoning = true;
-    if (caps.structured_output === true) capabilities.supports_structured_output = true;
-    if (caps.json_schema === true) capabilities.supports_json_schema = true;
-    seen.add(lowerId);
-    const out = {
-      id,
-      owned_by: typeof model.owned_by === 'string' && model.owned_by.trim() ? model.owned_by.trim() : 'Other',
-      context_length: typeof meta.context_length === 'number' && meta.context_length > 0 ? meta.context_length : undefined,
-      max_output_tokens: typeof meta.max_output_tokens === 'number' && meta.max_output_tokens > 0 ? meta.max_output_tokens : undefined,
-      capabilities: Object.keys(capabilities).length > 0 ? capabilities : undefined,
-      input_modalities: Array.isArray(meta.input_modalities) ? meta.input_modalities.filter(m => typeof m === 'string') : undefined,
-      output_modalities: Array.isArray(meta.output_modalities) ? meta.output_modalities.filter(m => typeof m === 'string') : undefined,
-      pricing: {
-        input_cost_per_million_eur: input,
-        output_cost_per_million_eur: output,
-        ...(Number.isFinite(cacheRead) && cacheRead > 0 ? { cache_read_cost_per_million_eur: cacheRead } : {}),
-        currency: 'EUR'
-      }
-    };
-    return [out];
-  });
-}
-
 // Build deggo catalog: use deggo's published Quality Score verbatim.
 // deggo's /api/models ships qualityValue (Quality v4, 0-100) directly, so we take it as-is.
 // We deliberately do NOT synthesize from raw sub-scores (intelligence/coding/agentic/correct/
@@ -1027,7 +946,6 @@ const FIELD_ALLOWLIST = {
   opper: ['id', 'name', 'provider_display_name', 'context_window', 'max_output_tokens', 'description', 'capabilities', 'pricing', 'region'],
   eurouter: ['id', 'name', 'author_info', 'author', 'context_length', 'description', 'reasoning', 'tags', 'providers', 'pricing'],
   greenpt: ['id', 'owned_by', 'provider', 'type', 'contextWindowTokens', 'maxOutputTokens', 'pricing', 'canonical_id', 'creator', 'display_name'],
-  melious: ['id', 'owned_by', 'context_length', 'max_output_tokens', 'capabilities', 'input_modalities', 'output_modalities', 'pricing', 'canonical_id', 'creator', 'display_name'],
   requesty: [
     'id', 'description', 'owned_by', 'input_price', 'output_price', 'cached_price', 'caching_price',
     'context_window', 'max_output_tokens', 'supports_caching', 'supports_vision', 'supports_reasoning',
@@ -1046,7 +964,6 @@ const FIELD_ALLOWLIST = {
     opper: ['input', 'output', 'cached_input', 'cache_creation'],
     eurouter: ['prompt', 'completion', 'input_cache_read', 'input_cache_write', 'currency'],
     greenpt: ['promptToken', 'completionToken', 'cachedPromptToken', 'currency'],
-    melious: ['input_cost_per_million_eur', 'output_cost_per_million_eur', 'cache_read_cost_per_million_eur', 'currency'],
     requesty: null,
     openrouter: ['prompt', 'completion', 'input_cache_read', 'currency'],
   },
@@ -1064,11 +981,9 @@ const FIELD_ALLOWLIST = {
   },
   input_modalities: {
     cortecs: true,
-    melious: true,
   },
   output_modalities: {
     cortecs: true,
-    melious: true,
   },
   providers: {
     cortecs: true,
@@ -1077,7 +992,6 @@ const FIELD_ALLOWLIST = {
   capabilities: {
     edenai: true,
     opper: true,
-    melious: true,
   },
   regions: {
     edenai: true,
@@ -1108,7 +1022,6 @@ const CACHE_FIELD_SPECS = {
   opper: { pricingArrays: ['cached_input', 'cache_creation'] },
   eurouter: { pricing: ['input_cache_read', 'input_cache_write'] },
   greenpt: { pricing: ['cachedPromptToken'] },
-  melious: { pricing: ['cache_read_cost_per_million_eur'] },
   requesty: { top: ['cached_price', 'caching_price'] },
   openrouter: { pricing: ['input_cache_read'] }
 };

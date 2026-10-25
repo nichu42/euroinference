@@ -75,7 +75,6 @@ jobs:
       - name: Run Cache Update Script
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          MELIOUS_API_KEY: ${{ secrets.MELIOUS_API_KEY }}
         run: node scripts/update_data.js
 
       - name: Build md -> html docs

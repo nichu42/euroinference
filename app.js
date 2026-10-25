@@ -479,7 +479,7 @@ function renderUpdateWarning() {
   if (!el || typeof UPDATE_STATUS === 'undefined') return;
   const names = {
     mammouth: 'Mammouth AI', cortecs: 'Cortecs', mistral: 'Mistral AI',
-    edenai: 'Eden AI', opper: 'Opper AI', eurouter: 'EURouter', greenpt: 'GreenPT', melious: 'Melious AI', requesty: 'Requesty AI',
+    edenai: 'Eden AI', opper: 'Opper AI', eurouter: 'EURouter', greenpt: 'GreenPT', requesty: 'Requesty AI',
     openrouter: 'OpenRouter (reference)'
   };
   const failed = Object.entries(names)
@@ -538,12 +538,6 @@ function getOfferInputCost(providerId, offer, currency = selectedCurrency) {
   if (providerId === 'greenpt') {
     if (!offer.pricing || offer.pricing.promptToken === undefined) return null;
     const priceEur = offer.pricing.promptToken;
-    return currency === 'EUR' ? priceEur : priceEur * exchangeRate;
-  }
-
-  if (providerId === 'melious') {
-    if (!offer.pricing || offer.pricing.input_cost_per_million_eur === undefined) return null;
-    const priceEur = offer.pricing.input_cost_per_million_eur;
     return currency === 'EUR' ? priceEur : priceEur * exchangeRate;
   }
 
@@ -609,12 +603,6 @@ function getOfferOutputCost(providerId, offer, currency = selectedCurrency) {
   if (providerId === 'greenpt') {
     if (!offer.pricing || offer.pricing.completionToken === undefined) return null;
     const priceEur = offer.pricing.completionToken;
-    return currency === 'EUR' ? priceEur : priceEur * exchangeRate;
-  }
-
-  if (providerId === 'melious') {
-    if (!offer.pricing || offer.pricing.output_cost_per_million_eur === undefined) return null;
-    const priceEur = offer.pricing.output_cost_per_million_eur;
     return currency === 'EUR' ? priceEur : priceEur * exchangeRate;
   }
 
@@ -689,8 +677,6 @@ function getOfferCacheRates(providerId, offer, currency = selectedCurrency) {
     write = convertPerMillionRate(write, origCur, currency);
   } else if (providerId === 'greenpt') {
     read = convertPerMillionRate(positiveRate(offer.pricing?.cachedPromptToken), 'EUR', currency);
-  } else if (providerId === 'melious') {
-    read = convertPerMillionRate(positiveRate(offer.pricing?.cache_read_cost_per_million_eur), 'EUR', currency);
   } else if (providerId === 'requesty') {
     read = convertPerMillionRate(usdPerTokenToPerMillion(offer.cached_price), 'USD', currency);
     write = convertPerMillionRate(usdPerTokenToPerMillion(offer.caching_price), 'USD', currency);
@@ -1405,8 +1391,6 @@ function getNativeCacheStrings(providerId, rawOffer) {
   } else if (providerId === 'requesty') {
     if (positiveRate(rawOffer.cached_price) !== null) out.read = `$${(rawOffer.cached_price * 1000000).toFixed(2)} USD`;
     if (positiveRate(rawOffer.caching_price) !== null) out.write = `$${(rawOffer.caching_price * 1000000).toFixed(2)} USD`;
-  } else if (providerId === 'melious') {
-    if (positiveRate(rawOffer.pricing?.cache_read_cost_per_million_eur) !== null) out.read = `€${rawOffer.pricing.cache_read_cost_per_million_eur.toFixed(2)} EUR`;
   } else if (providerId === 'openrouter') {
     if (positiveRate(rawOffer.pricing?.input_cache_read) !== null) out.read = `$${(rawOffer.pricing.input_cache_read * 1000000).toFixed(4)} USD`;
   }
@@ -1474,13 +1458,6 @@ function buildModalOffer(providerId, rawOffer, normOffer, sovereignty) {
     }
     if (typeof rawOffer.output_price === 'number') {
       origOut = `$${(rawOffer.output_price * 1000000).toFixed(2)} USD`;
-    }
-  } else if (providerId === 'melious' && rawOffer && rawOffer.pricing) {
-    if (typeof rawOffer.pricing.input_cost_per_million_eur === 'number') {
-      origIn = `€${rawOffer.pricing.input_cost_per_million_eur.toFixed(2)} EUR`;
-    }
-    if (typeof rawOffer.pricing.output_cost_per_million_eur === 'number') {
-      origOut = `€${rawOffer.pricing.output_cost_per_million_eur.toFixed(2)} EUR`;
     }
   } else if (providerId === 'openrouter' && rawOffer && rawOffer.pricing) {
     if (typeof rawOffer.pricing.prompt === 'number') {
