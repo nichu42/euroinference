@@ -68,6 +68,7 @@ jobs:
           node --check scripts/build_credits.js
           node --check scripts/build_methodology.js
           node --check scripts/build_privacy.js
+          node --check scripts/build_sitemap.js
           node --check data.js
           git diff --check
 
@@ -81,13 +82,14 @@ jobs:
           node scripts/build_credits.js
           node scripts/build_methodology.js
           node scripts/build_privacy.js
+          node scripts/build_sitemap.js
 
       - name: Commit and Push Changes
         if: github.event_name != 'pull_request'
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data.js config credits.html methodology.html privacy.html
+          git add data.js config credits.html methodology.html privacy.html sitemap.xml
           # Commit only if there are changes to prevent empty commits
           git diff --quiet && git diff --staged --quiet || git commit -m "Auto-update model data and exchange rates [skip ci]"
           git push

@@ -143,7 +143,7 @@ function buildPage({ title, effectiveDate, body }) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="${escapedTitle}.">
+  <meta name="description" content="How EuroInference normalizes provider prices, computes workload costs, and models prompt-caching economics for European LLM providers.">
   <title>${escapedTitle} | EuroInference</title>
   <link rel="canonical" href="https://euroinference.eu/methodology.html">
   <meta name="author" content="nichu42">
@@ -157,11 +157,13 @@ function buildPage({ title, effectiveDate, body }) {
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="EuroInference">
   <meta property="og:image" content="https://euroinference.eu/assets/logo_250px.webp">
+  <meta property="og:image:alt" content="EuroInference logo">
   <meta property="og:locale" content="en">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="${escapedTitle} | EuroInference">
   <meta name="twitter:description" content="${escapedTitle} — EuroInference methodology.">
   <meta name="twitter:image" content="https://euroinference.eu/assets/logo_250px.webp">
+  <meta name="twitter:image:alt" content="EuroInference logo">
   <link rel="icon" type="image/webp" href="assets/logo_100px.webp">
   <link rel="apple-touch-icon" href="assets/logo_250px.webp">
   <link rel="stylesheet" href="styles.css?v=20260838">
@@ -172,12 +174,33 @@ function buildPage({ title, effectiveDate, body }) {
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "Article",
-    "headline": "${escapedTitle}",
-    "about": "Cost & Caching Methodology for EuroInference",
-    "inLanguage": "en",
-    "isPartOf": { "@type": "WebSite", "name": "EuroInference", "url": "https://euroinference.eu/" },
-    "license": "https://github.com/nichu42/euroinference/blob/main/LICENSE"
+    "@graph": [
+      {
+        "@type": "Article",
+        "headline": ${JSON.stringify(title)},
+        "about": "Cost & Caching Methodology for EuroInference",
+        "inLanguage": "en",
+        "isPartOf": { "@type": "WebSite", "name": "EuroInference", "url": "https://euroinference.eu/" },
+        "license": "https://github.com/nichu42/euroinference/blob/main/LICENSE"
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "Home",
+            "item": "https://euroinference.eu/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": ${JSON.stringify(title)},
+            "item": "https://euroinference.eu/methodology.html"
+          }
+        ]
+      }
+    ]
   }
   </script>
 </head>
