@@ -459,7 +459,17 @@ async function run() {
     const json = await res.json();
     deggoMeta = { updatedAt: json.updatedAt || new Date().toISOString(), source: 'https://models.deggo.fyi/docs' };
     const rawModels = Array.isArray(json.models) ? json.models : (Array.isArray(json) ? json : []);
-    deggoCatalog = buildDeggoCatalog(rawModels);
+    let recommendModels = [];
+    try {
+      const recommendRes = await fetchWithRetry('https://models.deggo.fyi/api/recommend', {}, 'deggo-recommend');
+      const recommendJson = await recommendRes.json();
+      recommendModels = Array.isArray(recommendJson)
+        ? recommendJson
+        : (Array.isArray(recommendJson.models) ? recommendJson.models : []);
+    } catch (recommendErr) {
+      console.warn('Failed to fetch deggo recommendation variants (non-fatal, using /api/models only):', recommendErr.message);
+    }
+    deggoCatalog = buildDeggoCatalog(rawModels, recommendModels);
     updateStatus.deggo = Array.isArray(deggoCatalog);
     console.log(`Fetched deggo catalog: ${deggoCatalog.length} models (Quality — Value is EU-blended).`);
   } catch (err) {
@@ -913,20 +923,83 @@ function buildGreenPTCatalog(rawModels) {
 // incorrect) — that would redistribute deggo's proprietary blend without approval (see AGENTS.md).
 // Value is computed locally per EU cheapest offer (quality × EU affordability). If a model lacks
 // qualityValue, it stays unrated.
-function buildDeggoCatalog(rawModels) {
-  return rawModels.flatMap(m => {
+function buildDeggoCatalog(rawModels, recommendModels = []) {
+  const entries = rawModels.flatMap(m => {
     if (!m || typeof m !== 'object' || !m.slug) return [];
     const slug = String(m.slug).trim();
     if (!slug) return [];
     const clean = slug.toLowerCase();
     const q = Number.isFinite(m.qualityValue) ? m.qualityValue : (Number.isFinite(m.quality) ? m.quality : null);
-    const entry = {
+    return [{
       slug,
       clean,
       qualityValue: q
-    };
-    return [entry];
+    }];
   });
+
+  const existingClean = new Set();
+  const existingNormalized = new Set();
+  for (const entry of entries) {
+    const clean = EuroUnify.getCleanModelId(entry.slug);
+    const normalized = EuroUnify.normalizeSlug(entry.slug);
+    if (clean) existingClean.add(clean);
+    if (normalized) existingNormalized.add(normalized);
+  }
+
+  function recommendVariantPriority(name) {
+    const text = String(name || '');
+    if (!text.includes('(')) return 0;
+    const suffix = text.match(/\(([^)]*)\)\s*$/);
+    const variant = suffix ? suffix[1].toLowerCase() : '';
+    if (variant.includes('max')) return 0;
+    if (variant.includes('high') && !variant.includes('xhigh')) return 1;
+    if (variant.includes('xhigh')) return 2;
+    if (variant.includes('medium')) return 3;
+    if (variant.includes('low')) return 4;
+    return 5;
+  }
+
+  // /api/recommend exposes UUID-backed thinking variants that are absent from /api/models.
+  // Add only a canonical fallback for models with no catalog match. Prefer High/Max-style
+  // variants over Xhigh so the unified family gets a representative default score.
+  const fallbacks = new Map();
+  for (const m of Array.isArray(recommendModels) ? recommendModels : []) {
+    if (!m || typeof m !== 'object' || !m.name) continue;
+    const q = Number.isFinite(m.qualityValue) ? m.qualityValue : null;
+    if (!Number.isFinite(q)) continue;
+
+    const baseName = String(m.name).replace(/\s*\([^)]*\)\s*$/, '').trim();
+    if (!baseName) continue;
+    const slug = baseName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    const clean = EuroUnify.getCleanModelId(slug);
+    const normalized = EuroUnify.normalizeSlug(slug);
+    if (!clean) continue;
+    if (existingClean.has(clean) || existingNormalized.has(normalized)) continue;
+
+    const priority = recommendVariantPriority(m.name);
+    const previous = fallbacks.get(clean);
+    if (!previous || priority < previous.priority ||
+      (priority === previous.priority && q > previous.qualityValue)) {
+      fallbacks.set(clean, {
+        slug: clean,
+        clean,
+        qualityValue: q,
+        priority
+      });
+    }
+  }
+  for (const fallback of fallbacks.values()) {
+    entries.push({
+      slug: fallback.slug,
+      clean: fallback.clean,
+      qualityValue: fallback.qualityValue
+    });
+  }
+
+  return entries;
 }
 
 // Whitelist of fields each provider's model objects must keep.
